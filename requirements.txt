@@ -1,4 +1,5 @@
 requests
 yfinance
-pandas-ta
 pytz
+git+https://github.com/twopirllc/pandas-ta.git
+
