@@ -5,7 +5,7 @@ import requests
 import datetime
 import pytz
 import yfinance as yf
-import pandas_ta as ta
+import ta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # --- RENDER WEB SERVICE PORT BINDING ---
