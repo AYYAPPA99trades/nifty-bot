@@ -1,35 +1,43 @@
 import os
 import time
-import threading
 import requests
-import datetime
-import pytz
+import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import pandas as pd
+import numpy as np
 import yfinance as yf
-import ta
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from nselib import capital_market
 
-# --- RENDER WEB SERVICE PORT BINDING ---
-class SimpleHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
-        self.end_headers()
-        self.wfile.write(b"NIFTY 50 Trading Bot is running live 24/7!")
+# --- TIMEZONE CONFIGURATION ---
+IST = ZoneInfo("Asia/Kolkata")
 
-def run_dummy_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
-    server.serve_forever()
-
-# Start dummy web server in background thread for Render free tier
-threading.Thread(target=run_dummy_server, daemon=True).start()
-
-# --- TRADING BOT LOGIC ---
+# --- TELEGRAM CONFIGURATION (2 CHATS) ---
 TELEGRAM_BOT_TOKEN = "8941192045:AAEBwZ8O4Q7-K-ktSx7kAewUy4QIXsLWEhs"
 TELEGRAM_CHAT_IDS = ["8996427731", "6789591588"]
 
-IST = pytz.timezone('Asia/Kolkata')
+def send_telegram(msg):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    for chat_id in TELEGRAM_CHAT_IDS:
+        try:
+            payload = {"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"}
+            requests.post(url, data=payload, timeout=8)
+        except Exception as e:
+            print(f"Telegram Delivery Error for {chat_id}: {e}")
 
+# --- MARKET HOLIDAY CHECK ---
+try:
+    holidays_df = capital_market.holiday_trading()
+    today_str = datetime.now(IST).strftime('%d-%b-%Y')
+    if holidays_df is not None and not holidays_df.empty:
+        if 'tradingDate' in holidays_df.columns and today_str in holidays_df['tradingDate'].values:
+            reason = holidays_df[holidays_df['tradingDate'] == today_str]['description'].values[0]
+            send_telegram(f"🏖️ *MARKET HOLIDAY TODAY!*\nReason: {reason}\nScanner will not run today.")
+            exit(0)
+except Exception as e:
+    print(f"Holiday check skipped: {e}")
+
+# --- INTRADAY TRADE ENGINE STATE ---
 trade_state = {
     "in_trade": False,
     "type": None,
@@ -40,175 +48,205 @@ trade_state = {
     "t3": 0.0,
     "t1_hit": False,
     "t2_hit": False,
-    "t3_hit": False,
-    "exit_alert_sent": False
+    "t3_hit": False
 }
 
-daily_alert_sent = False
-had_error = False
+trade_stats = {"total_signals": 0, "target_hits": 0, "sl_hits": 0}
+last_heartbeat_hour = -1
 
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    for chat_id in TELEGRAM_CHAT_IDS:
-        payload = {"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"}
-        try:
-            requests.post(url, data=payload, timeout=10)
-        except Exception as e:
-            print(f"Telegram Delivery Error for {chat_id}: {e}")
+# --- INDICATORS FORMULA (PANDAS DIRECT - NO 'ta' MODULE CRASH) ---
+def compute_indicators(df):
+    close = df['Close']
+    high = df['High']
+    low = df['Low']
+    volume = df['Volume'] if 'Volume' in df else pd.Series(0, index=df.index)
 
-def run_strategy(symbol="^NSEI"):
-    global trade_state, daily_alert_sent, had_error
-    now = datetime.datetime.now(IST)
-    current_time = now.time()
+    # 9 & 21 Exponential Moving Averages
+    df['EMA_9'] = close.ewm(span=9, adjust=False).mean()
+    df['EMA_21'] = close.ewm(span=21, adjust=False).mean()
 
-    if now.weekday() > 4:
-        return
+    # 14 Relative Strength Index (RSI)
+    delta = close.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
 
-    if datetime.time(9, 15) <= current_time < datetime.time(9, 20):
-        if not daily_alert_sent:
-            send_telegram("🟢 *Market Opened (9:15 AM)*\nNIFTY 50 trading bot is actively monitoring.")
-            daily_alert_sent = True
-    elif current_time >= datetime.time(9, 25):
-        daily_alert_sent = False
+    # 14 Average True Range (ATR)
+    tr = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1)
+    df['ATR'] = tr.rolling(window=14).mean()
 
-    if current_time >= datetime.time(15, 15) and trade_state["in_trade"] and not trade_state["exit_alert_sent"]:
-        send_telegram(f"⏰ *INTRADAY AUTO-EXIT ALERT (3:15 PM)*\n\nAsset: NIFTY 50\nMarket closing soon. Close all active intraday positions!")
-        trade_state["exit_alert_sent"] = True
-        trade_state["in_trade"] = False
-        return
+    # VWAP Approximation
+    typical_price = (high + low + close) / 3
+    cum_vp = (typical_price * volume).cumsum()
+    cum_vol = volume.cumsum()
+    df['VWAP'] = np.where(cum_vol != 0, cum_vp / cum_vol, close)
+    return df
 
-    if current_time >= datetime.time(15, 30):
-        trade_state["in_trade"] = False
-        trade_state["exit_alert_sent"] = False
-        return
+send_telegram("🚀 *NIFTY 50 STRATEGY BOT ONLINE!*\n• Schedule: 09:00 AM - 03:40 PM IST\n• Strategy: EMA 9/21 Crossover + RSI + VWAP\n• Targets: T1, T2, T3 & Stop Loss Active\n• Dual Channel Dispatch Ready")
 
-    if current_time < datetime.time(9, 15) or current_time > datetime.time(15, 30):
-        return
-
+# --- MAIN RUNNING ENGINE ---
+while True:
     try:
-        df = yf.download(tickers=symbol, period="1mo", interval="5m", progress=False)
-        if df.empty or len(df) < 50:
-            raise ValueError("Empty or insufficient data received from Yahoo Finance")
+        now = datetime.now(IST)
+        current_time = now.time()
+        current_time_str = now.strftime('%H:%M:%S')
 
-        if had_error:
-            send_telegram("✅ *ISSUE RESOLVED!*\nMarket data feed restored. Bot is functioning normally.")
-            had_error = False
-
-    except Exception as err:
-        if not had_error:
-            send_telegram(f"⚠️ *DATA FETCH ERROR!*\nFailed to fetch market data: {err}\nRetrying on next scan cycle.")
-            had_error = True
-        return
-
-    try:
-        df['EMA_9'] = ta.ema(df['Close'], length=9)
-        df['EMA_21'] = ta.ema(df['Close'], length=21)
-        df['RSI'] = ta.rsi(df['Close'], length=14)
-        df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
-        df['VWAP'] = ta.vwap(df['High'], df['Low'], df['Close'], df['Volume'])
-    except Exception as calc_err:
-        send_telegram(f"⚠️ *INDICATOR CALCULATION ERROR*\nFailed to calculate indicators: {calc_err}")
-        return
-
-    prev = df.iloc[-2]
-    curr = df.iloc[-1]
-
-    close = round(float(curr['Close']), 2)
-    high = round(float(curr['High']), 2)
-    low = round(float(curr['Low']), 2)
-    atr = round(float(curr['ATR']), 2)
-    vwap = float(curr['VWAP']) if 'VWAP' in curr and not df['VWAP'].isna().all() else close
-    rsi = float(curr['RSI'])
-    ema9_curr, ema21_curr = float(curr['EMA_9']), float(curr['EMA_21'])
-    ema9_prev, ema21_prev = float(prev['EMA_9']), float(prev['EMA_21'])
-
-    if trade_state["in_trade"]:
-        if trade_state["type"] == "BUY":
-            if low <= trade_state["sl"]:
-                send_telegram(f"❌ *STOP LOSS HIT (BUY EXIT)*\n\nAsset: NIFTY 50\nExit Price: {trade_state['sl']}\nClose position to minimize loss.")
-                trade_state["in_trade"] = False
-            elif high >= trade_state["t1"] and not trade_state["t1_hit"]:
-                send_telegram(f"🎯 *TARGET 1 ACHIEVED!*\n\nAsset: NIFTY 50\nT1 Price: {trade_state['t1']}\nBook partial profit!")
-                trade_state["t1_hit"] = True
-            elif high >= trade_state["t2"] and not trade_state["t2_hit"]:
-                send_telegram(f"🎯🎯 *TARGET 2 ACHIEVED!*\n\nAsset: NIFTY 50\nT2 Price: {trade_state['t2']}\nMove Stop Loss to Entry (Trail SL)!")
-                trade_state["t2_hit"] = True
-            elif high >= trade_state["t3"] and not trade_state["t3_hit"]:
-                send_telegram(f"🎯🎯🎯 *FINAL TARGET 3 HIT!*\n\nAsset: NIFTY 50\nT3 Price: {trade_state['t3']}\nBook full profits and exit!")
-                trade_state["t3_hit"] = True
-                trade_state["in_trade"] = False
-
-        elif trade_state["type"] == "SELL":
-            if high >= trade_state["sl"]:
-                send_telegram(f"❌ *STOP LOSS HIT (SELL EXIT)*\n\nAsset: NIFTY 50\nExit Price: {trade_state['sl']}\nClose position.")
-                trade_state["in_trade"] = False
-            elif low <= trade_state["t1"] and not trade_state["t1_hit"]:
-                send_telegram(f"🎯 *TARGET 1 ACHIEVED!*\n\nAsset: NIFTY 50\nT1 Price: {trade_state['t1']}\nBook partial profit!")
-                trade_state["t1_hit"] = True
-            elif low <= trade_state["t2"] and not trade_state["t2_hit"]:
-                send_telegram(f"🎯🎯 *TARGET 2 ACHIEVED!*\n\nAsset: NIFTY 50\nT2 Price: {trade_state['t2']}\nMove Stop Loss to Entry (Trail SL)!")
-                trade_state["t2_hit"] = True
-            elif low <= trade_state["t3"] and not trade_state["t3_hit"]:
-                send_telegram(f"🎯🎯🎯 *FINAL TARGET 3 HIT!*\n\nAsset: NIFTY 50\nT3 Price: {trade_state['t3']}\nBook full profits and exit!")
-                trade_state["t3_hit"] = True
-                trade_state["in_trade"] = False
-
-    else:
-        if (ema9_prev <= ema21_prev and ema9_curr > ema21_curr) and (close >= vwap) and (rsi > 50):
-            risk = atr * 1.5
-            sl = round(close - risk, 2)
-            t1 = round(close + (risk * 1.0), 2)
-            t2 = round(close + (risk * 1.5), 2)
-            t3 = round(close + (risk * 2.0), 2)
-
-            trade_state.update({
-                "in_trade": True, "type": "BUY", "entry": close, "sl": sl,
-                "t1": t1, "t2": t2, "t3": t3, "t1_hit": False, "t2_hit": False, "t3_hit": False
-            })
-
-            msg = (
-                f"🟢 *NIFTY 50 BUY SIGNAL*\n\n"
-                f"💵 *Entry:* {close}\n"
-                f"🛑 *Stop Loss:* {sl}\n\n"
-                f"🎯 *Target 1:* {t1}\n"
-                f"🎯 *Target 2:* {t2}\n"
-                f"🎯 *Target 3:* {t3}"
+        # 03:40 PM Clean Daily Exit
+        if current_time >= datetime.strptime("15:40", "%H:%M").time():
+            summary = (
+                f"📊 *MARKET CLOSED (DAILY REPORT)*\n"
+                f"Date: {now.strftime('%d-%b-%Y')}\n\n"
+                f"• Total Signals: {trade_stats['total_signals']}\n"
+                f"• Target Hits: {trade_stats['target_hits']}\n"
+                f"• Stop Loss Hits: {trade_stats['sl_hits']}\n\n"
+                f"Scanner shutting down cleanly. See you tomorrow at 09:00 AM IST!"
             )
-            send_telegram(msg)
+            send_telegram(summary)
+            break
 
-        elif (ema9_prev >= ema21_prev and ema9_curr < ema21_curr) and (close <= vwap) and (rsi < 50):
-            risk = atr * 1.5
-            sl = round(close + risk, 2)
-            t1 = round(close - (risk * 1.0), 2)
-            t2 = round(close - (risk * 1.5), 2)
-            t3 = round(close - (risk * 2.0), 2)
+        # 03:20 PM Intraday Auto-Exit
+        if current_time >= datetime.strptime("15:20", "%H:%M").time() and trade_state["in_trade"]:
+            send_telegram(f"⏰ *INTRADAY AUTO-EXIT ALERT (3:20 PM)*\n\nAsset: NIFTY 50\nMarket closing soon. Active position closed cleanly!")
+            trade_state["in_trade"] = False
 
-            trade_state.update({
-                "in_trade": True, "type": "SELL", "entry": close, "sl": sl,
-                "t1": t1, "t2": t2, "t3": t3, "t1_hit": False, "t2_hit": False, "t3_hit": False
-            })
+        # Live Scanning Data (5-minute candles)
+        df = yf.download(tickers="^NSEI", period="5d", interval="5m", progress=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
 
-            msg = (
-                f"🔴 *NIFTY 50 SELL SIGNAL*\n\n"
-                f"💵 *Entry:* {close}\n"
-                f"🛑 *Stop Loss:* {sl}\n\n"
-                f"🎯 *Target 1:* {t1}\n"
-                f"🎯 *Target 2:* {t2}\n"
-                f"🎯 *Target 3:* {t3}"
-            )
-            send_telegram(msg)
+        if not df.empty and len(df) >= 30:
+            df = compute_indicators(df)
+            curr = df.iloc[-1]
+            prev = df.iloc[-2]
 
-try:
-    print("Starting NIFTY Trading Bot...")
-    send_telegram("🚀 *NIFTY 50 Trading Bot Live!*\nBot is operational with automatic recovery and health alerts.")
+            close = round(float(curr['Close']), 2)
+            high = round(float(curr['High']), 2)
+            low = round(float(curr['Low']), 2)
+            atr = round(float(curr['ATR']), 2) if not np.isnan(curr['ATR']) else 25.0
+            vwap = float(curr['VWAP']) if not np.isnan(curr['VWAP']) else close
+            rsi = float(curr['RSI']) if not np.isnan(curr['RSI']) else 50.0
 
-    while True:
-        try:
-            run_strategy("^NSEI")
-        except Exception as loop_err:
-            print(f"Loop error: {loop_err}")
-            send_telegram(f"⚠️ *Loop Alert:* {loop_err}")
-        time.sleep(60)
+            ema9_curr, ema21_curr = float(curr['EMA_9']), float(curr['EMA_21'])
+            ema9_prev, ema21_prev = float(prev['EMA_9']), float(prev['EMA_21'])
 
-except Exception as fatal_crash:
-    send_telegram(f"🚨 *CRITICAL ALERT: Bot Stopped!*\nBot stopped unexpectedly.\nReason: {fatal_crash}")
+            # Target & SL Tracker
+            if trade_state["in_trade"]:
+                if trade_state["type"] == "BUY":
+                    if low <= trade_state["sl"]:
+                        trade_stats["sl_hits"] += 1
+                        send_telegram(f"❌ *STOP LOSS HIT (BUY EXIT)*\n\nAsset: NIFTY 50\nExit Price: {trade_state['sl']:.2f}")
+                        trade_state["in_trade"] = False
+
+                    elif high >= trade_state["t1"] and not trade_state["t1_hit"]:
+                        trade_stats["target_hits"] += 1
+                        send_telegram(f"🎯 *TARGET 1 ACHIEVED!*\n\nAsset: NIFTY 50\nT1 Price: {trade_state['t1']:.2f}\nBook partial profit!")
+                        trade_state["t1_hit"] = True
+
+                    elif high >= trade_state["t2"] and not trade_state["t2_hit"]:
+                        trade_stats["target_hits"] += 1
+                        send_telegram(f"🎯🎯 *TARGET 2 ACHIEVED!*\n\nAsset: NIFTY 50\nT2 Price: {trade_state['t2']:.2f}\nMove SL to Entry!")
+                        trade_state["t2_hit"] = True
+
+                    elif high >= trade_state["t3"] and not trade_state["t3_hit"]:
+                        trade_stats["target_hits"] += 1
+                        send_telegram(f"🎯🎯🎯 *FINAL TARGET 3 HIT!*\n\nAsset: NIFTY 50\nT3 Price: {trade_state['t3']:.2f}\nBook full profits and exit!")
+                        trade_state["in_trade"] = False
+
+                elif trade_state["type"] == "SELL":
+                    if high >= trade_state["sl"]:
+                        trade_stats["sl_hits"] += 1
+                        send_telegram(f"❌ *STOP LOSS HIT (SELL EXIT)*\n\nAsset: NIFTY 50\nExit Price: {trade_state['sl']:.2f}")
+                        trade_state["in_trade"] = False
+
+                    elif low <= trade_state["t1"] and not trade_state["t1_hit"]:
+                        trade_stats["target_hits"] += 1
+                        send_telegram(f"🎯 *TARGET 1 ACHIEVED!*\n\nAsset: NIFTY 50\nT1 Price: {trade_state['t1']:.2f}\nBook partial profit!")
+                        trade_state["t1_hit"] = True
+
+                    elif low <= trade_state["t2"] and not trade_state["t2_hit"]:
+                        trade_stats["target_hits"] += 1
+                        send_telegram(f"🎯🎯 *TARGET 2 ACHIEVED!*\n\nAsset: NIFTY 50\nT2 Price: {trade_state['t2']:.2f}\nMove SL to Entry!")
+                        trade_state["t2_hit"] = True
+
+                    elif low <= trade_state["t3"] and not trade_state["t3_hit"]:
+                        trade_stats["target_hits"] += 1
+                        send_telegram(f"🎯🎯🎯 *FINAL TARGET 3 HIT!*\n\nAsset: NIFTY 50\nT3 Price: {trade_state['t3']:.2f}\nBook full profits and exit!")
+                        trade_state["in_trade"] = False
+
+            # Trade Entry Detector (09:30 AM - 03:20 PM)
+            trade_window = datetime.strptime("09:30", "%H:%M").time() <= current_time < datetime.strptime("15:20", "%H:%M").time()
+            if trade_window and not trade_state["in_trade"]:
+                risk = max(round(atr * 1.5, 2), 20.0)
+
+                # BUY Entry
+                if (ema9_prev <= ema21_prev and ema9_curr > ema21_curr) and (close >= vwap) and (rsi > 50):
+                    sl = round(close - risk, 2)
+                    t1 = round(close + (risk * 1.0), 2)
+                    t2 = round(close + (risk * 1.5), 2)
+                    t3 = round(close + (risk * 2.0), 2)
+
+                    trade_state.update({
+                        "in_trade": True, "type": "BUY", "entry": close, "sl": sl,
+                        "t1": t1, "t2": t2, "t3": t3, "t1_hit": False, "t2_hit": False, "t3_hit": False
+                    })
+                    trade_stats["total_signals"] += 1
+
+                    msg = (
+                        f"🟢 *NIFTY 50 BUY SIGNAL*\n\n"
+                        f"⏰ Time: {current_time_str} IST\n"
+                        f"💵 *Entry:* {close:.2f}\n"
+                        f"🛑 *Stop Loss:* {sl:.2f}\n\n"
+                        f"🎯 *Target 1:* {t1:.2f}\n"
+                        f"🎯 *Target 2:* {t2:.2f}\n"
+                        f"🎯 *Target 3:* {t3:.2f}"
+                    )
+                    send_telegram(msg)
+
+                # SELL Entry
+                elif (ema9_prev >= ema21_prev and ema9_curr < ema21_curr) and (close <= vwap) and (rsi < 50):
+                    sl = round(close + risk, 2)
+                    t1 = round(close - (risk * 1.0), 2)
+                    t2 = round(close - (risk * 1.5), 2)
+                    t3 = round(close - (risk * 2.0), 2)
+
+                    trade_state.update({
+                        "in_trade": True, "type": "SELL", "entry": close, "sl": sl,
+                        "t1": t1, "t2": t2, "t3": t3, "t1_hit": False, "t2_hit": False, "t3_hit": False
+                    })
+                    trade_stats["total_signals"] += 1
+
+                    msg = (
+                        f"🔴 *NIFTY 50 SELL SIGNAL*\n\n"
+                        f"⏰ Time: {current_time_str} IST\n"
+                        f"💵 *Entry:* {close:.2f}\n"
+                        f"🛑 *Stop Loss:* {sl:.2f}\n\n"
+                        f"🎯 *Target 1:* {t1:.2f}\n"
+                        f"🎯 *Target 2:* {t2:.2f}\n"
+                        f"🎯 *Target 3:* {t3:.2f}"
+                    )
+                    send_telegram(msg)
+
+        # 1-Hour Heartbeat Status with Nifty & BankNifty (+/- points & %)
+        if now.minute == 0 and now.hour != last_heartbeat_hour and (9 <= now.hour <= 15):
+            last_heartbeat_hour = now.hour
+            try:
+                indices_data = capital_market.market_watch_all_indices()
+                hb_msg = f"💓 *HOURLY STATUS ALERT*\n⏰ Time: {current_time_str} IST\n\n"
+                for target_idx in ["NIFTY 50", "NIFTY BANK"]:
+                    idx_row = indices_data[indices_data['index'] == target_idx]
+                    if not idx_row.empty:
+                        last_p = float(str(idx_row['last'].values[0]).replace(',', ''))
+                        prev_p = float(str(idx_row['previousClose'].values[0]).replace(',', ''))
+                        diff = last_p - prev_p
+                        pct = (diff / prev_p) * 100
+                        hb_msg += f"• *{target_idx}:* {last_p:.2f} ({diff:+.2f} | {pct:+.2f}%)\n"
+                send_telegram(hb_msg)
+            except Exception as hb_err:
+                print(f"Heartbeat Fetch Error: {hb_err}")
+
+        time.sleep(30)
+
+    except Exception as loop_error:
+        print(f"Error in execution loop: {loop_error}")
+        time.sleep(15)
