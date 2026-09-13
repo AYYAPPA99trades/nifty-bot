@@ -442,4 +442,3 @@ while True:
     except Exception as loop_err:
         print(f"Engine Warning: {loop_err}")
         time.sleep(10)
-                   save_baup_state(active_trades)
