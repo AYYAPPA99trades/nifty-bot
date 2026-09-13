@@ -25,6 +25,20 @@ def send_telegram_alert(msg):
         except Exception as e:
             print(f"Telegram Alert Error ({chat_id}): {e}")
 
+# --- WEEKEND CHECK (SATURDAY & SUNDAY) ---
+# Monday = 0, Tuesday = 1, ... Saturday = 5, Sunday = 6
+today_weekday = datetime.now(IST).weekday()
+if today_weekday in [5, 6]:
+    day_name = "Saturday" if today_weekday == 5 else "Sunday"
+    send_telegram_alert(
+        f"🏖️ WEEKEND MARKET HOLIDAY ({day_name})!\n\n"
+        f"• Today is a weekend. Market is closed.\n"
+        f"• Scanner will not execute trades today.\n"
+        f"• Resumes on Monday at 09:00 AM IST."
+    )
+    print(f"Weekend detected ({day_name}). Exiting script cleanly.")
+    exit(0)
+
 # --- MARKET HOLIDAY CHECK ---
 try:
     holidays_df = capital_market.holiday_trading()
@@ -428,3 +442,4 @@ while True:
     except Exception as loop_err:
         print(f"Engine Warning: {loop_err}")
         time.sleep(10)
+                   save_baup_state(active_trades)
