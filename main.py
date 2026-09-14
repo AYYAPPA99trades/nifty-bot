@@ -101,7 +101,6 @@ def calculate_camarilla_pivots(index_name):
             close = float(prev_day['Close'])
             diff = high - low
 
-            # Camarilla Formulas
             h4 = close + (diff * 1.1 / 2.0)
             h3 = close + (diff * 1.1 / 4.0)
             l3 = close - (diff * 1.1 / 4.0)
@@ -118,7 +117,6 @@ def calculate_camarilla_pivots(index_name):
         print(f"Camarilla Calc Error ({index_name}): {e}")
     return None
 
-# Historical 5m Candles
 def get_historical_candles(index_name):
     try:
         ticker = YF_TICKERS.get(index_name)
@@ -139,12 +137,12 @@ def get_historical_candles(index_name):
         print(f"Historical 5m Fetch Error ({index_name}): {e}")
     return []
 
-# Initialize levels and states
 for idx in INDEX_WATCHLIST:
     camarilla_levels[idx] = calculate_camarilla_pivots(idx)
 
 history_5m = {idx: get_historical_candles(idx) for idx in INDEX_WATCHLIST}
 current_candles_5m = {idx: {"open": None, "high": -1, "low": 9999999, "close": None, "slot": None} for idx in INDEX_WATCHLIST}
+live_candles_formed = {idx: 0 for idx in INDEX_WATCHLIST}
 active_trades = load_backup_state()
 
 # --- STARTUP & MARKET STATUS ALERT (09:00 AM) ---
@@ -187,7 +185,7 @@ while True:
                 f"• Stop Losses Hit: {trade_stats['sl_hits']}"
             )
             send_telegram_alert(summary)
-            print("Daily trading window completed. Bot shutting down.")
+            print("Daily trading completed. Bot shutting down.")
             break
 
         raw_data = get_live_index_data()
@@ -222,7 +220,6 @@ while True:
 
                         # --- BUY TRADE TRACKING ---
                         if trade['type'] == 'BUY':
-                            # 4. STOP LOSS HIT
                             if current_price <= trade['sl']:
                                 trade_stats['sl_hits'] += 1
                                 send_telegram_alert(
@@ -236,7 +233,6 @@ while True:
                                 save_backup_state(active_trades)
                                 continue
 
-                            # TARGET 1 HIT
                             if not trade.get('t1_hit') and current_price >= trade['t1']:
                                 trade['t1_hit'] = True
                                 trade_stats['target_hits'] += 1
@@ -249,7 +245,6 @@ while True:
                                 )
                                 save_backup_state(active_trades)
 
-                            # TARGET 2 HIT
                             if trade.get('t1_hit') and not trade.get('t2_hit') and current_price >= trade['t2']:
                                 trade['t2_hit'] = True
                                 trade_stats['target_hits'] += 1
@@ -262,7 +257,6 @@ while True:
                                 )
                                 save_backup_state(active_trades)
 
-                            # FINAL TARGET 3 HIT
                             if trade.get('t2_hit') and current_price >= trade['t3']:
                                 trade_stats['target_hits'] += 1
                                 send_telegram_alert(
@@ -278,7 +272,6 @@ while True:
 
                         # --- SELL TRADE TRACKING ---
                         elif trade['type'] == 'SELL':
-                            # 4. STOP LOSS HIT
                             if current_price >= trade['sl']:
                                 trade_stats['sl_hits'] += 1
                                 send_telegram_alert(
@@ -292,7 +285,6 @@ while True:
                                 save_backup_state(active_trades)
                                 continue
 
-                            # TARGET 1 HIT
                             if not trade.get('t1_hit') and current_price <= trade['t1']:
                                 trade['t1_hit'] = True
                                 trade_stats['target_hits'] += 1
@@ -305,7 +297,6 @@ while True:
                                 )
                                 save_backup_state(active_trades)
 
-                            # TARGET 2 HIT
                             if trade.get('t1_hit') and not trade.get('t2_hit') and current_price <= trade['t2']:
                                 trade['t2_hit'] = True
                                 trade_stats['target_hits'] += 1
@@ -318,7 +309,6 @@ while True:
                                 )
                                 save_backup_state(active_trades)
 
-                            # FINAL TARGET 3 HIT
                             if trade.get('t2_hit') and current_price <= trade['t3']:
                                 trade_stats['target_hits'] += 1
                                 send_telegram_alert(
@@ -338,6 +328,7 @@ while True:
                     if b5["slot"] is None or b5["slot"] != slot_5m:
                         if b5["slot"] is not None and b5["open"] is not None:
                             history_5m[index_name].append({'Open': b5["open"], 'High': b5["high"], 'Low': b5["low"], 'Close': b5["close"]})
+                            live_candles_formed[index_name] += 1
                             if len(history_5m[index_name]) > 120:
                                 history_5m[index_name].pop(0)
                         b5["open"] = b5["high"] = b5["low"] = b5["close"] = current_price
@@ -349,7 +340,8 @@ while True:
 
                     # --- CAMARILLA BREAKOUT SIGNAL DETECTION ---
                     pivots = camarilla_levels.get(index_name)
-                    if can_take_trades and active_trades[index_name] is None and pivots is not None:
+                    # ലൈവ് സെഷനിൽ പുതിയ കാൻഡിൽ ബിൽഡ് ആയ ശേഷം മാത്രം സിഗ്നൽ എടുക്കുന്നു (പഴയ ഡാറ്റ തടയാൻ)
+                    if can_take_trades and active_trades[index_name] is None and pivots is not None and live_candles_formed[index_name] >= 1:
                         df_c = pd.DataFrame(history_5m[index_name])
                         if len(df_c) >= 2:
                             c_curr = df_c.iloc[-1]['Close']
