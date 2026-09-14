@@ -25,8 +25,7 @@ def send_telegram_alert(msg):
         except Exception as e:
             print(f"Telegram Alert Error ({chat_id}): {e}")
 
-# --- WEEKEND CHECK (SATURDAY & SUNDAY) ---
-# Monday = 0, Tuesday = 1, ... Saturday = 5, Sunday = 6
+# --- 1. WEEKEND CHECK (SATURDAY & SUNDAY) ---
 today_weekday = datetime.now(IST).weekday()
 if today_weekday in [5, 6]:
     day_name = "Saturday" if today_weekday == 5 else "Sunday"
@@ -36,20 +35,26 @@ if today_weekday in [5, 6]:
         f"• Scanner will not execute trades today.\n"
         f"• Resumes on Monday at 09:00 AM IST."
     )
-    print(f"Weekend detected ({day_name}). Exiting script cleanly.")
+    print(f"Weekend detected ({day_name}). Exiting cleanly.")
     exit(0)
 
-# --- MARKET HOLIDAY CHECK ---
+# --- 2. NSE OFFICIAL HOLIDAY CHECK ---
 try:
     holidays_df = capital_market.holiday_trading()
     today_str = datetime.now(IST).strftime('%d-%b-%Y')
     if holidays_df is not None and not holidays_df.empty:
         if 'tradingDate' in holidays_df.columns and today_str in holidays_df['tradingDate'].values:
             reason = holidays_df[holidays_df['tradingDate'] == today_str]['description'].values[0]
-            send_telegram_alert(f"🏖️ MARKET HOLIDAY TODAY!\nReason: {reason}\nScanner will not run today.")
+            send_telegram_alert(
+                f"🏖️ MARKET HOLIDAY TODAY!\n\n"
+                f"• Reason: {reason}\n"
+                f"• Scanner will not run today.\n"
+                f"• Bot will safely shut down."
+            )
+            print(f"NSE holiday detected ({reason}). Exiting cleanly.")
             exit(0)
 except Exception as e:
-    print(f"Holiday check skipped: {e}")
+    print(f"Holiday API check skipped/fallback: {e}")
 
 INDEX_WATCHLIST = ["NIFTY 50", "NIFTY BANK"]
 YF_TICKERS = {"NIFTY 50": "^NSEI", "NIFTY BANK": "^NSEBANK"}
@@ -82,7 +87,7 @@ def save_backup_state(state):
     except Exception as err:
         print(f"Backup Save Error: {err}")
 
-# --- PREVIOUS DAY DATA & CAMARILLA CALCULATION ---
+# --- CAMARILLA PIVOT CALCULATION ---
 def calculate_camarilla_pivots(index_name):
     try:
         ticker = YF_TICKERS.get(index_name)
@@ -90,7 +95,7 @@ def calculate_camarilla_pivots(index_name):
         if not df_daily.empty:
             if isinstance(df_daily.columns, pd.MultiIndex):
                 df_daily.columns = df_daily.columns.get_level_values(0)
-            prev_day = df_daily.iloc[-2]  # കഴിഞ്ഞ ദിവസത്തെ ഹൈ, ലോ, ക്ലോസ്
+            prev_day = df_daily.iloc[-2]
             high = float(prev_day['High'])
             low = float(prev_day['Low'])
             close = float(prev_day['Close'])
@@ -113,7 +118,7 @@ def calculate_camarilla_pivots(index_name):
         print(f"Camarilla Calc Error ({index_name}): {e}")
     return None
 
-# Pre-fetch 5-day historical 5m candles for intraday monitoring
+# Historical 5m Candles
 def get_historical_candles(index_name):
     try:
         ticker = YF_TICKERS.get(index_name)
@@ -131,10 +136,10 @@ def get_historical_candles(index_name):
                 })
             return candles
     except Exception as e:
-        print(f"Historical 5m Fetch Error: {e}")
+        print(f"Historical 5m Fetch Error ({index_name}): {e}")
     return []
 
-# Initialize Camarilla levels and candles
+# Initialize levels and states
 for idx in INDEX_WATCHLIST:
     camarilla_levels[idx] = calculate_camarilla_pivots(idx)
 
@@ -142,7 +147,7 @@ history_5m = {idx: get_historical_candles(idx) for idx in INDEX_WATCHLIST}
 current_candles_5m = {idx: {"open": None, "high": -1, "low": 9999999, "close": None, "slot": None} for idx in INDEX_WATCHLIST}
 active_trades = load_backup_state()
 
-# --- 1. STARTUP & MARKET STATUS ALERT (09:00 AM) ---
+# --- STARTUP & MARKET STATUS ALERT (09:00 AM) ---
 send_telegram_alert(
     "🚀 NIFTY & BANK NIFTY SCANNER ACTIVATED\n\n"
     "• Strategies: CAMARILLA BREAKOUT (H4 & L4)\n"
@@ -158,7 +163,7 @@ def get_live_index_data():
         print(f"NSE Live Fetch Error: {e}")
         return None
 
-# --- MAIN EXECUTION LOOP ---
+# --- MAIN EXECUTION ENGINE (09:00 AM - 03:40 PM) ---
 while True:
     try:
         now = datetime.now(IST)
@@ -172,7 +177,7 @@ while True:
         can_take_trades = (start_trade_time <= current_time < end_trade_time)
         is_market_closing = (current_time >= end_trade_time)
 
-        # --- 7. MARKET CLOSING REPORT (03:40 PM) ---
+        # 7. MARKET CLOSING REPORT (03:40 PM)
         if current_time >= shutdown_time:
             summary = (
                 f"📊 MARKET CLOSED (DAILY REPORT)\n\n"
@@ -182,6 +187,7 @@ while True:
                 f"• Stop Losses Hit: {trade_stats['sl_hits']}"
             )
             send_telegram_alert(summary)
+            print("Daily trading window completed. Bot shutting down.")
             break
 
         raw_data = get_live_index_data()
@@ -197,7 +203,7 @@ while True:
                     if index_name not in prev_close_dict and 'previousClose' in row.columns:
                         prev_close_dict[index_name] = float(str(row['previousClose'].values[0]).replace(',', ''))
 
-                    # 1. TRADE MONITORING & STRICT EXITS
+                    # --- ACTIVE TRADE MONITORING ---
                     trade = active_trades[index_name]
                     if trade is not None:
                         # 6. INTRADAY AUTO-EXIT ALERT (03:20 PM)
@@ -214,9 +220,9 @@ while True:
                             save_backup_state(active_trades)
                             continue
 
-                        # --- BUY TRADE HANDLING ---
+                        # --- BUY TRADE TRACKING ---
                         if trade['type'] == 'BUY':
-                            # 4. STOP LOSS HIT (Immediate exit, no further alerts)
+                            # 4. STOP LOSS HIT
                             if current_price <= trade['sl']:
                                 trade_stats['sl_hits'] += 1
                                 send_telegram_alert(
@@ -230,7 +236,7 @@ while True:
                                 save_backup_state(active_trades)
                                 continue
 
-                            # 3. TARGET 1 HIT
+                            # TARGET 1 HIT
                             if not trade.get('t1_hit') and current_price >= trade['t1']:
                                 trade['t1_hit'] = True
                                 trade_stats['target_hits'] += 1
@@ -256,7 +262,7 @@ while True:
                                 )
                                 save_backup_state(active_trades)
 
-                            # TARGET 3 HIT (Final Target & Full Exit)
+                            # FINAL TARGET 3 HIT
                             if trade.get('t2_hit') and current_price >= trade['t3']:
                                 trade_stats['target_hits'] += 1
                                 send_telegram_alert(
@@ -270,9 +276,9 @@ while True:
                                 save_backup_state(active_trades)
                                 continue
 
-                        # --- SELL TRADE HANDLING ---
+                        # --- SELL TRADE TRACKING ---
                         elif trade['type'] == 'SELL':
-                            # 4. STOP LOSS HIT (Immediate exit, no further alerts)
+                            # 4. STOP LOSS HIT
                             if current_price >= trade['sl']:
                                 trade_stats['sl_hits'] += 1
                                 send_telegram_alert(
@@ -286,7 +292,7 @@ while True:
                                 save_backup_state(active_trades)
                                 continue
 
-                            # 3. TARGET 1 HIT
+                            # TARGET 1 HIT
                             if not trade.get('t1_hit') and current_price <= trade['t1']:
                                 trade['t1_hit'] = True
                                 trade_stats['target_hits'] += 1
@@ -312,7 +318,7 @@ while True:
                                 )
                                 save_backup_state(active_trades)
 
-                            # TARGET 3 HIT (Final Target & Full Exit)
+                            # FINAL TARGET 3 HIT
                             if trade.get('t2_hit') and current_price <= trade['t3']:
                                 trade_stats['target_hits'] += 1
                                 send_telegram_alert(
@@ -326,7 +332,7 @@ while True:
                                 save_backup_state(active_trades)
                                 continue
 
-                    # 2. 5-MINUTE CANDLE AGGREGATION
+                    # --- 5-MINUTE CANDLE AGGREGATION ---
                     slot_5m = (now.minute // 5) * 5
                     b5 = current_candles_5m[index_name]
                     if b5["slot"] is None or b5["slot"] != slot_5m:
@@ -341,7 +347,7 @@ while True:
                         b5["low"] = min(b5["low"], current_price)
                         b5["close"] = current_price
 
-                    # 3. CAMARILLA BREAKOUT SIGNAL DETECTION
+                    # --- CAMARILLA BREAKOUT SIGNAL DETECTION ---
                     pivots = camarilla_levels.get(index_name)
                     if can_take_trades and active_trades[index_name] is None and pivots is not None:
                         df_c = pd.DataFrame(history_5m[index_name])
@@ -354,9 +360,9 @@ while True:
                             h3 = pivots['H3']
                             l3 = pivots['L3']
 
-                            # BUY BREAKOUT (H4 ബ്രേക്ക് ചെയ്യുമ്പോൾ)
+                            # BUY SIGNAL (H4 Breakout)
                             if c_prev <= h4 and c_curr > h4:
-                                sl = round(h3, 2)  # Stop loss at Camarilla H3
+                                sl = round(h3, 2)
                                 risk = round(c_curr - sl, 2)
                                 if risk < 15: risk = 25.0; sl = round(c_curr - 25.0, 2)
 
@@ -390,9 +396,9 @@ while True:
                                 )
                                 send_telegram_alert(msg)
 
-                            # SELL BREAKDOWN (L4 താഴേക്ക് പൊട്ടിക്കുമ്പോൾ)
+                            # SELL SIGNAL (L4 Breakdown)
                             elif c_prev >= l4 and c_curr < l4:
-                                sl = round(l3, 2)  # Stop loss at Camarilla L3
+                                sl = round(l3, 2)
                                 risk = round(sl - c_curr, 2)
                                 if risk < 15: risk = 25.0; sl = round(c_curr + 25.0, 2)
 
@@ -426,7 +432,7 @@ while True:
                                 )
                                 send_telegram_alert(msg)
 
-            # --- 5. HOURLY STATUS ALERT (+/- POINTS & %) ---
+            # --- 5. HOURLY STATUS ALERT ---
             if now.minute == 0 and now.hour != last_heartbeat_hour and (9 <= now.hour <= 15):
                 last_heartbeat_hour = now.hour
                 hb_msg = f"💓 HOURLY STATUS ALERT\n⏰ Time: {current_time_str} IST\n\n"
