@@ -23,11 +23,23 @@ def send_telegram_alert(msg):
     for chat_id in TELEGRAM_CHAT_IDS:
         try:
             payload = {"chat_id": chat_id, "text": msg}
-            tele_session.post(url, json=payload, timeout=3)
+            tele_session.post(url, json=payload, timeout=8)
         except Exception as e:
             print(f"Telegram Alert Error ({chat_id}): {e}")
 
-# --- 1. WEEKEND CHECK (SATURDAY & SUNDAY) ---
+# FAKE STRATEGY DISPLAY NAME
+STRATEGY_DISPLAY_NAME = "QUANTUM MOMENTUM"
+
+# --- 1. STARTUP & MARKET STATUS ALERT (09:00 AM) ---
+send_telegram_alert(
+    "🚀 NIFTY & BANK NIFTY SCANNER ACTIVATED\n\n"
+    f"• Strategies: {STRATEGY_DISPLAY_NAME}\n"
+    "• Target Tracking: T1, T2, T3 Active\n"
+    "• Strict SL Exit: Closes immediately upon hitting SL\n"
+    "• First-Come, First-Served: Active trade blocks overlapping signals"
+)
+
+# --- 2. WEEKEND CHECK (SATURDAY & SUNDAY) ---
 today_weekday = datetime.now(IST).weekday()
 if today_weekday in [5, 6]:
     day_name = "Saturday" if today_weekday == 5 else "Sunday"
@@ -40,7 +52,7 @@ if today_weekday in [5, 6]:
     print(f"Weekend detected ({day_name}). Exiting cleanly.")
     exit(0)
 
-# --- 2. NSE OFFICIAL HOLIDAY CHECK ---
+# --- 3. NSE OFFICIAL HOLIDAY CHECK ---
 try:
     holidays_df = capital_market.holiday_trading()
     today_str = datetime.now(IST).strftime('%d-%b-%Y')
@@ -61,9 +73,6 @@ except Exception as e:
 INDEX_WATCHLIST = ["NIFTY 50", "NIFTY BANK"]
 YF_TICKERS = {"NIFTY 50": "^NSEI", "NIFTY BANK": "^NSEBANK"}
 BACKUP_FILE = "active_trades_camarilla.json"
-
-# FAKE STRATEGY DISPLAY NAME
-STRATEGY_DISPLAY_NAME = "QUANTUM MOMENTUM"
 
 trade_stats = {"total_signals": 0, "target_hits": 0, "sl_hits": 0}
 prev_close_dict = {}
@@ -92,7 +101,7 @@ def save_backup_state(state):
     except Exception as err:
         print(f"Backup Save Error: {err}")
 
-# --- CAMARILLA PIVOT CALCULATION (INTERNAL ENGINE) ---
+# --- CAMARILLA PIVOT CALCULATION ---
 def calculate_camarilla_pivots(index_name):
     try:
         ticker = YF_TICKERS.get(index_name)
@@ -125,15 +134,6 @@ for idx in INDEX_WATCHLIST:
     camarilla_levels[idx] = calculate_camarilla_pivots(idx)
 
 active_trades = load_backup_state()
-
-# --- 1. STARTUP & MARKET STATUS ALERT (09:00 AM) ---
-send_telegram_alert(
-    "🚀 NIFTY & BANK NIFTY SCANNER ACTIVATED\n\n"
-    f"• Strategies: {STRATEGY_DISPLAY_NAME}\n"
-    "• Target Tracking: T1, T2, T3 Active\n"
-    "• Strict SL Exit: Closes immediately upon hitting SL\n"
-    "• First-Come, First-Served: Active trade blocks overlapping signals"
-)
 
 def get_live_index_data():
     try:
@@ -303,7 +303,7 @@ while True:
                                 save_backup_state(active_trades)
                                 continue
 
-                    # --- INSTANT BREAKOUT SIGNAL (ZERO-LAG LIVE TICK) ---
+                    # --- INSTANT BREAKOUT SIGNAL ---
                     pivots = camarilla_levels.get(index_name)
                     if can_take_trades and active_trades[index_name] is None and pivots is not None:
                         h4 = pivots['H4']
@@ -311,7 +311,7 @@ while True:
                         h3 = pivots['H3']
                         l3 = pivots['L3']
 
-                        # BUY BREAKOUT (H4)
+                        # BUY BREAKOUT
                         if current_price > h4:
                             sl = round(h3, 2)
                             risk = round(current_price - sl, 2)
@@ -347,7 +347,7 @@ while True:
                             )
                             send_telegram_alert(msg)
 
-                        # SELL BREAKDOWN (L4)
+                        # SELL BREAKDOWN
                         elif current_price < l4:
                             sl = round(l3, 2)
                             risk = round(sl - current_price, 2)
@@ -394,10 +394,8 @@ while True:
                     hb_msg += f"• {idx}: {prc:.2f} ({diff:+.2f} | {pct:+.2f}%)\n"
                 send_telegram_alert(hb_msg)
 
-        # 3 സെക്കൻഡ് ഫാസ്റ്റ് റിഫ്രഷ് (ഡിലേ പരമാവധി കുറയ്ക്കാൻ)
         time.sleep(3)
 
     except Exception as loop_err:
         print(f"Engine Warning: {loop_err}")
         time.sleep(3)
-                                                   msg =                               
