@@ -12,16 +12,18 @@ from nselib import capital_market
 # --- TIMEZONE CONFIGURATION ---
 IST = ZoneInfo("Asia/Kolkata")
 
-# --- DUAL TELEGRAM CONFIGURATION ---
+# --- DUAL TELEGRAM CONFIGURATION (PERSISTENT FAST SESSION) ---
 TELEGRAM_BOT_TOKEN = "8941192045:AAEBwZ8O4Q7-K-ktSx7kAewUy4QIXsLWEhs"
 TELEGRAM_CHAT_IDS = ["8996427731", "6789591588"]
+
+tele_session = requests.Session()
 
 def send_telegram_alert(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     for chat_id in TELEGRAM_CHAT_IDS:
         try:
             payload = {"chat_id": chat_id, "text": msg}
-            requests.post(url, json=payload, timeout=8)
+            tele_session.post(url, json=payload, timeout=3)
         except Exception as e:
             print(f"Telegram Alert Error ({chat_id}): {e}")
 
@@ -54,11 +56,14 @@ try:
             print(f"NSE holiday detected ({reason}). Exiting cleanly.")
             exit(0)
 except Exception as e:
-    print(f"Holiday API check skipped/fallback: {e}")
+    print(f"Holiday API check skipped: {e}")
 
 INDEX_WATCHLIST = ["NIFTY 50", "NIFTY BANK"]
 YF_TICKERS = {"NIFTY 50": "^NSEI", "NIFTY BANK": "^NSEBANK"}
 BACKUP_FILE = "active_trades_camarilla.json"
+
+# FAKE STRATEGY DISPLAY NAME
+STRATEGY_DISPLAY_NAME = "QUANTUM MOMENTUM"
 
 trade_stats = {"total_signals": 0, "target_hits": 0, "sl_hits": 0}
 prev_close_dict = {}
@@ -87,7 +92,7 @@ def save_backup_state(state):
     except Exception as err:
         print(f"Backup Save Error: {err}")
 
-# --- CAMARILLA PIVOT CALCULATION ---
+# --- CAMARILLA PIVOT CALCULATION (INTERNAL ENGINE) ---
 def calculate_camarilla_pivots(index_name):
     try:
         ticker = YF_TICKERS.get(index_name)
@@ -110,45 +115,21 @@ def calculate_camarilla_pivots(index_name):
                 "H4": round(h4, 2),
                 "H3": round(h3, 2),
                 "L3": round(l3, 2),
-                "L4": round(l4, 2),
-                "Range": round(diff, 2)
+                "L4": round(l4, 2)
             }
     except Exception as e:
         print(f"Camarilla Calc Error ({index_name}): {e}")
     return None
 
-def get_historical_candles(index_name):
-    try:
-        ticker = YF_TICKERS.get(index_name)
-        df_hist = yf.download(ticker, period="5d", interval="5m", progress=False)
-        if not df_hist.empty:
-            if isinstance(df_hist.columns, pd.MultiIndex):
-                df_hist.columns = df_hist.columns.get_level_values(0)
-            candles = []
-            for _, row in df_hist.tail(80).iterrows():
-                candles.append({
-                    'Open': float(row['Open']),
-                    'High': float(row['High']),
-                    'Low': float(row['Low']),
-                    'Close': float(row['Close'])
-                })
-            return candles
-    except Exception as e:
-        print(f"Historical 5m Fetch Error ({index_name}): {e}")
-    return []
-
 for idx in INDEX_WATCHLIST:
     camarilla_levels[idx] = calculate_camarilla_pivots(idx)
 
-history_5m = {idx: get_historical_candles(idx) for idx in INDEX_WATCHLIST}
-current_candles_5m = {idx: {"open": None, "high": -1, "low": 9999999, "close": None, "slot": None} for idx in INDEX_WATCHLIST}
-live_candles_formed = {idx: 0 for idx in INDEX_WATCHLIST}
 active_trades = load_backup_state()
 
-# --- STARTUP & MARKET STATUS ALERT (09:00 AM) ---
+# --- 1. STARTUP & MARKET STATUS ALERT (09:00 AM) ---
 send_telegram_alert(
     "🚀 NIFTY & BANK NIFTY SCANNER ACTIVATED\n\n"
-    "• Strategies: CAMARILLA BREAKOUT (H4 & L4)\n"
+    f"• Strategies: {STRATEGY_DISPLAY_NAME}\n"
     "• Target Tracking: T1, T2, T3 Active\n"
     "• Strict SL Exit: Closes immediately upon hitting SL\n"
     "• First-Come, First-Served: Active trade blocks overlapping signals"
@@ -161,7 +142,7 @@ def get_live_index_data():
         print(f"NSE Live Fetch Error: {e}")
         return None
 
-# --- MAIN EXECUTION ENGINE (09:00 AM - 03:40 PM) ---
+# --- MAIN EXECUTION ENGINE ---
 while True:
     try:
         now = datetime.now(IST)
@@ -185,7 +166,7 @@ while True:
                 f"• Stop Losses Hit: {trade_stats['sl_hits']}"
             )
             send_telegram_alert(summary)
-            print("Daily trading completed. Bot shutting down.")
+            print("Daily trading window completed. Bot shutting down.")
             break
 
         raw_data = get_live_index_data()
@@ -322,107 +303,85 @@ while True:
                                 save_backup_state(active_trades)
                                 continue
 
-                    # --- 5-MINUTE CANDLE AGGREGATION ---
-                    slot_5m = (now.minute // 5) * 5
-                    b5 = current_candles_5m[index_name]
-                    if b5["slot"] is None or b5["slot"] != slot_5m:
-                        if b5["slot"] is not None and b5["open"] is not None:
-                            history_5m[index_name].append({'Open': b5["open"], 'High': b5["high"], 'Low': b5["low"], 'Close': b5["close"]})
-                            live_candles_formed[index_name] += 1
-                            if len(history_5m[index_name]) > 120:
-                                history_5m[index_name].pop(0)
-                        b5["open"] = b5["high"] = b5["low"] = b5["close"] = current_price
-                        b5["slot"] = slot_5m
-                    else:
-                        b5["high"] = max(b5["high"], current_price)
-                        b5["low"] = min(b5["low"], current_price)
-                        b5["close"] = current_price
-
-                    # --- CAMARILLA BREAKOUT SIGNAL DETECTION ---
+                    # --- INSTANT BREAKOUT SIGNAL (ZERO-LAG LIVE TICK) ---
                     pivots = camarilla_levels.get(index_name)
-                    # ലൈവ് സെഷനിൽ പുതിയ കാൻഡിൽ ബിൽഡ് ആയ ശേഷം മാത്രം സിഗ്നൽ എടുക്കുന്നു (പഴയ ഡാറ്റ തടയാൻ)
-                    if can_take_trades and active_trades[index_name] is None and pivots is not None and live_candles_formed[index_name] >= 1:
-                        df_c = pd.DataFrame(history_5m[index_name])
-                        if len(df_c) >= 2:
-                            c_curr = df_c.iloc[-1]['Close']
-                            c_prev = df_c.iloc[-2]['Close']
+                    if can_take_trades and active_trades[index_name] is None and pivots is not None:
+                        h4 = pivots['H4']
+                        l4 = pivots['L4']
+                        h3 = pivots['H3']
+                        l3 = pivots['L3']
 
-                            h4 = pivots['H4']
-                            l4 = pivots['L4']
-                            h3 = pivots['H3']
-                            l3 = pivots['L3']
+                        # BUY BREAKOUT (H4)
+                        if current_price > h4:
+                            sl = round(h3, 2)
+                            risk = round(current_price - sl, 2)
+                            if risk < 15: risk = 25.0; sl = round(current_price - 25.0, 2)
 
-                            # BUY SIGNAL (H4 Breakout)
-                            if c_prev <= h4 and c_curr > h4:
-                                sl = round(h3, 2)
-                                risk = round(c_curr - sl, 2)
-                                if risk < 15: risk = 25.0; sl = round(c_curr - 25.0, 2)
+                            t1 = round(current_price + (risk * 1.0), 2)
+                            t2 = round(current_price + (risk * 1.5), 2)
+                            t3 = round(current_price + (risk * 2.5), 2)
 
-                                t1 = round(c_curr + (risk * 1.0), 2)
-                                t2 = round(c_curr + (risk * 1.5), 2)
-                                t3 = round(c_curr + (risk * 2.5), 2)
+                            active_trades[index_name] = {
+                                'strategy': STRATEGY_DISPLAY_NAME,
+                                'type': 'BUY',
+                                'entry': current_price,
+                                'sl': sl,
+                                't1': t1,
+                                't2': t2,
+                                't3': t3,
+                                't1_hit': False,
+                                't2_hit': False
+                            }
+                            save_backup_state(active_trades)
+                            trade_stats['total_signals'] += 1
 
-                                active_trades[index_name] = {
-                                    'strategy': 'CAMARILLA BREAKOUT',
-                                    'type': 'BUY',
-                                    'entry': c_curr,
-                                    'sl': sl,
-                                    't1': t1,
-                                    't2': t2,
-                                    't3': t3,
-                                    't1_hit': False,
-                                    't2_hit': False
-                                }
-                                save_backup_state(active_trades)
-                                trade_stats['total_signals'] += 1
+                            msg = (
+                                f"🟢 {index_name} BUY SIGNAL\n\n"
+                                f"⚡ Strategy: {STRATEGY_DISPLAY_NAME}\n"
+                                f"⏰ Time: {current_time_str} IST\n"
+                                f"💵 Entry: {current_price:.2f}\n"
+                                f"🛑 Stop Loss: {sl:.2f}\n\n"
+                                f"🎯 Target 1: {t1:.2f}\n"
+                                f"🎯 Target 2: {t2:.2f}\n"
+                                f"🎯 Target 3: {t3:.2f}"
+                            )
+                            send_telegram_alert(msg)
 
-                                msg = (
-                                    f"🟢 {index_name} BUY SIGNAL\n\n"
-                                    f"⚡ Strategy: CAMARILLA BREAKOUT\n"
-                                    f"⏰ Time: {current_time_str} IST\n"
-                                    f"💵 Entry: {c_curr:.2f}\n"
-                                    f"🛑 Stop Loss: {sl:.2f}\n\n"
-                                    f"🎯 Target 1: {t1:.2f}\n"
-                                    f"🎯 Target 2: {t2:.2f}\n"
-                                    f"🎯 Target 3: {t3:.2f}"
-                                )
-                                send_telegram_alert(msg)
+                        # SELL BREAKDOWN (L4)
+                        elif current_price < l4:
+                            sl = round(l3, 2)
+                            risk = round(sl - current_price, 2)
+                            if risk < 15: risk = 25.0; sl = round(current_price + 25.0, 2)
 
-                            # SELL SIGNAL (L4 Breakdown)
-                            elif c_prev >= l4 and c_curr < l4:
-                                sl = round(l3, 2)
-                                risk = round(sl - c_curr, 2)
-                                if risk < 15: risk = 25.0; sl = round(c_curr + 25.0, 2)
+                            t1 = round(current_price - (risk * 1.0), 2)
+                            t2 = round(current_price - (risk * 1.5), 2)
+                            t3 = round(current_price - (risk * 2.5), 2)
 
-                                t1 = round(c_curr - (risk * 1.0), 2)
-                                t2 = round(c_curr - (risk * 1.5), 2)
-                                t3 = round(c_curr - (risk * 2.5), 2)
+                            active_trades[index_name] = {
+                                'strategy': STRATEGY_DISPLAY_NAME,
+                                'type': 'SELL',
+                                'entry': current_price,
+                                'sl': sl,
+                                't1': t1,
+                                't2': t2,
+                                't3': t3,
+                                't1_hit': False,
+                                't2_hit': False
+                            }
+                            save_backup_state(active_trades)
+                            trade_stats['total_signals'] += 1
 
-                                active_trades[index_name] = {
-                                    'strategy': 'CAMARILLA BREAKDOWN',
-                                    'type': 'SELL',
-                                    'entry': c_curr,
-                                    'sl': sl,
-                                    't1': t1,
-                                    't2': t2,
-                                    't3': t3,
-                                    't1_hit': False,
-                                    't2_hit': False
-                                }
-                                save_backup_state(active_trades)
-                                trade_stats['total_signals'] += 1
-
-                                msg = (
-                                    f"🔴 {index_name} SELL SIGNAL\n\n"
-                                    f"⚡ Strategy: CAMARILLA BREAKDOWN\n"
-                                    f"⏰ Time: {current_time_str} IST\n"
-                                    f"💵 Entry: {c_curr:.2f}\n"
-                                    f"🛑 Stop Loss: {sl:.2f}\n\n"
-                                    f"🎯 Target 1: {t1:.2f}\n"
-                                    f"🎯 Target 2: {t2:.2f}\n"
-                                    f"🎯 Target 3: {t3:.2f}"
-                                )
-                                send_telegram_alert(msg)
+                            msg = (
+                                f"🔴 {index_name} SELL SIGNAL\n\n"
+                                f"⚡ Strategy: {STRATEGY_DISPLAY_NAME}\n"
+                                f"⏰ Time: {current_time_str} IST\n"
+                                f"💵 Entry: {current_price:.2f}\n"
+                                f"🛑 Stop Loss: {sl:.2f}\n\n"
+                                f"🎯 Target 1: {t1:.2f}\n"
+                                f"🎯 Target 2: {t2:.2f}\n"
+                                f"🎯 Target 3: {t3:.2f}"
+                            )
+                            send_telegram_alert(msg)
 
             # --- 5. HOURLY STATUS ALERT ---
             if now.minute == 0 and now.hour != last_heartbeat_hour and (9 <= now.hour <= 15):
@@ -435,8 +394,10 @@ while True:
                     hb_msg += f"• {idx}: {prc:.2f} ({diff:+.2f} | {pct:+.2f}%)\n"
                 send_telegram_alert(hb_msg)
 
-        time.sleep(15)
+        # 3 സെക്കൻഡ് ഫാസ്റ്റ് റിഫ്രഷ് (ഡിലേ പരമാവധി കുറയ്ക്കാൻ)
+        time.sleep(3)
 
     except Exception as loop_err:
         print(f"Engine Warning: {loop_err}")
-        time.sleep(10)
+        time.sleep(3)
+                                                   msg =                               
