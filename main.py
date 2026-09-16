@@ -35,8 +35,8 @@ send_telegram_alert(
     "🚀 NIFTY & BANK NIFTY SCANNER ACTIVATED\n\n"
     f"• Strategies: {STRATEGY_DISPLAY_NAME}\n"
     "• Target Tracking: T1, T2, T3 Active\n"
-    "• SL & 03:20 Exit Rule: Disabled once Target 1 is hit\n"
-    "• First-Come, First-Served: Active trade blocks overlapping signals"
+    "• Dynamic Feature: Early Profit Booking on Reversal\n"
+    "• SL & 03:20 Exit Rule: Disabled once Target 1 is hit"
 )
 
 # --- 2. WEEKEND CHECK (SATURDAY & SUNDAY) ---
@@ -74,7 +74,14 @@ INDEX_WATCHLIST = ["NIFTY 50", "NIFTY BANK"]
 YF_TICKERS = {"NIFTY 50": "^NSEI", "NIFTY BANK": "^NSEBANK"}
 BACKUP_FILE = "active_trades_camarilla.json"
 
-trade_stats = {"total_signals": 0, "target_hits": 0, "sl_hits": 0}
+# ACCURATE TRADE-BY-TRADE STATS
+trade_stats = {
+    "total_signals": 0,
+    "targets_achieved": 0,
+    "sl_hits": 0,
+    "reversal_profits": 0
+}
+
 prev_close_dict = {}
 camarilla_levels = {}
 last_heartbeat_hour = -1
@@ -190,15 +197,26 @@ while True:
             send_morning_levels()
             levels_sent_today = True
 
-        # 7. MARKET CLOSING REPORT (03:40 PM WITH STRATEGY NAME)
+        # 7. MARKET CLOSING REPORT (03:40 PM WITH EXACT COUNT)
         if current_time >= shutdown_time:
+            total_sigs = trade_stats['total_signals']
+            targets = trade_stats['targets_achieved']
+            sls = trade_stats['sl_hits']
+            revs = trade_stats['reversal_profits']
+            
+            # Accurate Win-Rate Percentage
+            total_resolved = targets + sls + revs
+            win_rate = ((targets + revs) / total_resolved * 100) if total_resolved > 0 else 0.0
+
             summary = (
                 f"📊 MARKET CLOSED (DAILY REPORT)\n\n"
                 f"⚡ Strategy: {STRATEGY_DISPLAY_NAME}\n"
                 f"📅 Date: {now.strftime('%d-%b-%Y')}\n\n"
-                f"• Total Signals: {trade_stats['total_signals']}\n"
-                f"• Targets Achieved: {trade_stats['target_hits']}\n"
-                f"• Stop Losses Hit: {trade_stats['sl_hits']}"
+                f"• Total Signals: {total_sigs}\n"
+                f"• Targets Achieved: {targets}\n"
+                f"• Stop Losses Hit: {sls}\n"
+                f"• Reversal Exits in Profit: {revs}\n"
+                f"• Accuracy / Win Rate: {win_rate:.1f}%"
             )
             send_telegram_alert(summary)
             print("Daily trading window completed. Bot shutting down.")
@@ -237,6 +255,31 @@ while True:
 
                         # --- BUY TRADE TRACKING ---
                         if trade['type'] == 'BUY':
+                            if 'best_price' not in trade:
+                                trade['best_price'] = trade['entry']
+                            trade['best_price'] = max(trade['best_price'], current_price)
+                            peak_profit = trade['best_price'] - trade['entry']
+
+                            # REVERSAL EXIT (30+ points gain then 40% pullback)
+                            if not trade.get('t1_hit') and peak_profit >= 30:
+                                pullback = trade['best_price'] - current_price
+                                if pullback >= (peak_profit * 0.40):
+                                    locked_gain = current_price - trade['entry']
+                                    send_telegram_alert(
+                                        f"⚡ MARKET REVERSAL: BOOK FULL PROFIT!\n\n"
+                                        f"Strategy: {trade['strategy']}\n"
+                                        f"Index: {index_name} (BUY)\n"
+                                        f"Peak Price: {trade['best_price']:.2f}\n"
+                                        f"Book full profit @ {current_price:.2f}\n"
+                                        f"Points Captured: {locked_gain:+.2f}\n"
+                                        f"Status: Trade Closed before reaching SL. No more alerts."
+                                    )
+                                    trade_stats['reversal_profits'] += 1
+                                    active_trades[index_name] = None
+                                    save_backup_state(active_trades)
+                                    continue
+
+                            # STOP LOSS CHECK
                             if not trade.get('t1_hit') and current_price <= trade['sl']:
                                 trade_stats['sl_hits'] += 1
                                 send_telegram_alert(
@@ -250,9 +293,10 @@ while True:
                                 save_backup_state(active_trades)
                                 continue
 
+                            # TARGET 1 CHECK
                             if not trade.get('t1_hit') and current_price >= trade['t1']:
                                 trade['t1_hit'] = True
-                                trade_stats['target_hits'] += 1
+                                trade_stats['targets_achieved'] += 1
                                 send_telegram_alert(
                                     f"🎯 TARGET 1 ACHIEVED!\n\n"
                                     f"Strategy: {trade['strategy']}\n"
@@ -262,9 +306,9 @@ while True:
                                 )
                                 save_backup_state(active_trades)
 
+                            # TARGET 2 CHECK
                             if trade.get('t1_hit') and not trade.get('t2_hit') and current_price >= trade['t2']:
                                 trade['t2_hit'] = True
-                                trade_stats['target_hits'] += 1
                                 send_telegram_alert(
                                     f"🎯🎯 TARGET 2 ACHIEVED!\n\n"
                                     f"Strategy: {trade['strategy']}\n"
@@ -274,8 +318,8 @@ while True:
                                 )
                                 save_backup_state(active_trades)
 
+                            # FINAL TARGET 3 CHECK
                             if trade.get('t2_hit') and current_price >= trade['t3']:
-                                trade_stats['target_hits'] += 1
                                 send_telegram_alert(
                                     f"🎯🎯🎯 FINAL TARGET 3 HIT!\n\n"
                                     f"Strategy: {trade['strategy']}\n"
@@ -289,6 +333,31 @@ while True:
 
                         # --- SELL TRADE TRACKING ---
                         elif trade['type'] == 'SELL':
+                            if 'best_price' not in trade:
+                                trade['best_price'] = trade['entry']
+                            trade['best_price'] = min(trade['best_price'], current_price)
+                            peak_profit = trade['entry'] - trade['best_price']
+
+                            # REVERSAL EXIT (30+ points drop then 40% bounce)
+                            if not trade.get('t1_hit') and peak_profit >= 30:
+                                bounce = current_price - trade['best_price']
+                                if bounce >= (peak_profit * 0.40):
+                                    locked_gain = trade['entry'] - current_price
+                                    send_telegram_alert(
+                                        f"⚡ MARKET REVERSAL: BOOK FULL PROFIT!\n\n"
+                                        f"Strategy: {trade['strategy']}\n"
+                                        f"Index: {index_name} (SELL)\n"
+                                        f"Lowest Dip: {trade['best_price']:.2f}\n"
+                                        f"Book full profit @ {current_price:.2f}\n"
+                                        f"Points Captured: {locked_gain:+.2f}\n"
+                                        f"Status: Trade Closed before reaching SL. No more alerts."
+                                    )
+                                    trade_stats['reversal_profits'] += 1
+                                    active_trades[index_name] = None
+                                    save_backup_state(active_trades)
+                                    continue
+
+                            # STOP LOSS CHECK
                             if not trade.get('t1_hit') and current_price >= trade['sl']:
                                 trade_stats['sl_hits'] += 1
                                 send_telegram_alert(
@@ -302,9 +371,10 @@ while True:
                                 save_backup_state(active_trades)
                                 continue
 
+                            # TARGET 1 CHECK
                             if not trade.get('t1_hit') and current_price <= trade['t1']:
                                 trade['t1_hit'] = True
-                                trade_stats['target_hits'] += 1
+                                trade_stats['targets_achieved'] += 1
                                 send_telegram_alert(
                                     f"🎯 TARGET 1 ACHIEVED!\n\n"
                                     f"Strategy: {trade['strategy']}\n"
@@ -314,9 +384,9 @@ while True:
                                 )
                                 save_backup_state(active_trades)
 
+                            # TARGET 2 CHECK
                             if trade.get('t1_hit') and not trade.get('t2_hit') and current_price <= trade['t2']:
                                 trade['t2_hit'] = True
-                                trade_stats['target_hits'] += 1
                                 send_telegram_alert(
                                     f"🎯🎯 TARGET 2 ACHIEVED!\n\n"
                                     f"Strategy: {trade['strategy']}\n"
@@ -326,8 +396,8 @@ while True:
                                 )
                                 save_backup_state(active_trades)
 
+                            # FINAL TARGET 3 CHECK
                             if trade.get('t2_hit') and current_price <= trade['t3']:
-                                trade_stats['target_hits'] += 1
                                 send_telegram_alert(
                                     f"🎯🎯🎯 FINAL TARGET 3 HIT!\n\n"
                                     f"Strategy: {trade['strategy']}\n"
@@ -361,6 +431,7 @@ while True:
                                 'strategy': STRATEGY_DISPLAY_NAME,
                                 'type': 'BUY',
                                 'entry': current_price,
+                                'best_price': current_price,
                                 'sl': sl,
                                 't1': t1,
                                 't2': t2,
@@ -397,6 +468,7 @@ while True:
                                 'strategy': STRATEGY_DISPLAY_NAME,
                                 'type': 'SELL',
                                 'entry': current_price,
+                                'best_price': current_price,
                                 'sl': sl,
                                 't1': t1,
                                 't2': t2,
