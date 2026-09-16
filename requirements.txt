@@ -1,4 +1,4 @@
-7requests
+requests
 pandas
 numpy
 yfinance
