@@ -1,6 +1,4 @@
 requests
-pandas
-numpy
 yfinance
-nselib
-reportlab
+pandas
+pandas_ta
