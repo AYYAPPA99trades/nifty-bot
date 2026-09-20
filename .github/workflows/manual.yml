@@ -1,13 +1,6 @@
 name: Nifty Pro Multi-Bot Scanner
 
 on:
-  schedule:
-    # 03:38 UTC = 09:08 AM IST (Pre-market Alert)
-    - cron: '38 3 * * 1-5'
-    # 04:00 - 09:45 UTC = 09:30 AM - 03:15 PM IST (Live Trading Scan every 15 mins)
-    - cron: '0,15,30,45 4-9 * * 1-5'
-    # 10:15 UTC = 03:45 PM IST (Post-market Daily Summary & Expiry Check)
-    - cron: '15 10 * * 1-5'
   workflow_dispatch:
 
 permissions:
@@ -39,11 +32,3 @@ jobs:
           TELEGRAM_CHAT_ID_2: ${{ secrets.TELEGRAM_CHAT_ID_2 }}
         run: |
           python master_bot.py
-
-      - name: Save Trade State
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add trade_state.json || true
-          git commit -m "Auto-update trade state [skip ci]" || true
-          git push || true
