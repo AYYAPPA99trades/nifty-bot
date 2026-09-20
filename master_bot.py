@@ -448,4 +448,6 @@ def main():
             run_monthly_expiry_check(df_daily, state)
 
 if __name__ == "__main__":
+    send_telegram("🔔 <b>TEST ALERT</b>: Telegram Connection Successful for Nifty Pro Bot!")
     main()
+
