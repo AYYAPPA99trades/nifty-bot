@@ -1,15 +1,22 @@
-name: Nifty Trading Bot
+name: Nifty Pro Multi-Bot Scanner
 
 on:
   schedule:
-    - cron: '25 3 * * 1-5' # 08:55 AM IST (9 മണിക്ക് മുൻപ് കൃത്യമായി സ്റ്റാർട്ട് ആകും)
-    - cron: '0 7 * * 1-5'  # 12:30 PM IST (Backup trigger)
+    # 03:38 UTC = 09:08 AM IST (Pre-market Alert)
+    - cron: '38 3 * * 1-5'
+    # 04:00 - 09:45 UTC = 09:30 AM - 03:15 PM IST (Live Trading Scan every 15 mins)
+    - cron: '0,15,30,45 4-9 * * 1-5'
+    # 10:15 UTC = 03:45 PM IST (Post-market Daily Summary & Expiry Check)
+    - cron: '15 10 * * 1-5'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  run-bot:
+  run-algo-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -17,12 +24,26 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install Dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Bot
-        run: python main.py
+      - name: Execute Strategy Bot
+        env:
+          TELEGRAM_BOT_TOKEN_1: ${{ secrets.TELEGRAM_BOT_TOKEN_1 }}
+          TELEGRAM_CHAT_ID_1: ${{ secrets.TELEGRAM_CHAT_ID_1 }}
+          TELEGRAM_BOT_TOKEN_2: ${{ secrets.TELEGRAM_BOT_TOKEN_2 }}
+          TELEGRAM_CHAT_ID_2: ${{ secrets.TELEGRAM_CHAT_ID_2 }}
+        run: |
+          python master_bot.py
+
+      - name: Save Trade State
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add trade_state.json || true
+          git commit -m "Auto-update trade state [skip ci]" || true
+          git push || true
