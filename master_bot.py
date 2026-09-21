@@ -11,10 +11,21 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-# ----------------- CREDENTIALS CONFIGURATION -----------------
-# Telegram Configuration
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8941192045:AAELQ21ZiFKnHMMySyOoMue-hzMgS9ZjotQ")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "8996427731")
+# ----------------- MULTI-TELEGRAM CONFIGURATION -----------------
+# 1. പുതിയ Bot & Channels/Admin
+PRIMARY_BOT_TOKEN = os.getenv("PRIMARY_BOT_TOKEN", "8804327561:AAHYL_srWzPSWCZR5aJe_tM0fD24HblsL_Q")
+ADMIN_CHAT_ID = "6789591588"
+CHANNEL_CHAT_ID = "-1004416495917"
+PUBLIC_ALERT_IDS = [CHANNEL_CHAT_ID, ADMIN_CHAT_ID]
+
+# 2. ബാക്കപ്പ് / മുൻപ് നൽകിയ മറ്റ് ബോട്ടുകൾ
+BACKUP_TARGETS = [
+    {
+        "name": "Ayyappan Alert Bot",
+        "token": os.getenv("BACKUP_BOT_TOKEN", "8941192045:AAELQ21ZiFKnHMMySyOoMue-hzMgS9ZjotQ"),
+        "chat_id": os.getenv("BACKUP_CHAT_ID", "8996427731")
+    }
+]
 
 # Gmail SMTP Configuration
 SENDER_EMAIL = os.getenv("EMAIL_USER", "shinosanthagopi@gmail.com")
@@ -24,26 +35,37 @@ RECEIVER_EMAIL = os.getenv("EMAIL_RECEIVER", "shinosanthagopi@gmail.com")
 STATE_FILE = "trade_state_pro.json"
 IST = pytz.timezone("Asia/Kolkata")
 
-# ----------------- ALERT DISPATCHERS -----------------
+# ----------------- BROADCAST FUNCTION -----------------
 
 def send_telegram(text: str):
-    """Telegram വഴി അലേർട്ടുകൾ അയക്കുന്നു"""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram Credentials ലഭ്യമല്ല.")
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
-    try:
-        res = requests.post(url, json=payload, timeout=12)
-        if not res.ok:
-            print(f"Telegram Failed: {res.text}")
-    except Exception as e:
-        print(f"Error sending Telegram alert: {e}")
+    """എല്ലാ ടെലിഗ്രാം ചാനലുകളിലേക്കും അഡ്മിൻ ഐഡികളിലേക്കും ഒരേസമയം മെസ്സേജ് അയക്കുന്നു"""
+    # 1. പുതിയ Bot വഴി Channel-ലേക്കും Admin-ലേക്കും അയക്കുന്നു
+    if PRIMARY_BOT_TOKEN:
+        url = f"https://api.telegram.org/bot{PRIMARY_BOT_TOKEN}/sendMessage"
+        for target_id in PUBLIC_ALERT_IDS:
+            payload = {"chat_id": target_id, "text": text, "parse_mode": "HTML"}
+            try:
+                res = requests.post(url, json=payload, timeout=12)
+                if not res.ok:
+                    print(f"Telegram Failed for {target_id}: {res.text}")
+            except Exception as e:
+                print(f"Error sending to {target_id}: {e}")
+
+    # 2. ബാക്കപ്പ് ബോട്ടിലേക്ക് അയക്കുന്നു
+    for target in BACKUP_TARGETS:
+        token = target["token"]
+        cid = target["chat_id"]
+        if token and cid:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            payload = {"chat_id": cid, "text": text, "parse_mode": "HTML"}
+            try:
+                requests.post(url, json=payload, timeout=12)
+            except Exception as e:
+                print(f"Error sending to {target['name']}: {e}")
 
 def send_email(subject: str, html_body: str):
-    """Gmail വഴി പ്രധാന റിപ്പോർട്ടുകളും അലേർട്ടുകളും അയക്കുന്നു"""
+    """Gmail വഴി ഡെയ്‌ലി പെർഫോമൻസ് റിപ്പോർട്ട് അയക്കുന്നു"""
     if not SENDER_EMAIL or not APP_PASSWORD:
-        print("Email credentials ലഭ്യമല്ല.")
         return
     
     msg = MIMEMultipart()
@@ -57,14 +79,13 @@ def send_email(subject: str, html_body: str):
         server.login(SENDER_EMAIL, APP_PASSWORD)
         server.send_message(msg)
         server.quit()
-        print("Email Alert വിജയകരമായി അയച്ചു!")
+        print("Email Alert Sent Successfully!")
     except Exception as e:
-        print(f"Email അയക്കുന്നതിൽ പിശക്: {e}")
+        print(f"Email Error: {e}")
 
 # ----------------- STATE MANAGEMENT -----------------
 
 def load_state():
-    """Trade state track ചെയ്യുകയും റീസ്റ്റാർട്ട് ആയാൽ റിക്കവർ ചെയ്യുകയും ചെയ്യുന്നു"""
     today_str = datetime.datetime.now(IST).strftime("%Y-%m-%d")
     default_state = {
         "date": today_str,
@@ -87,7 +108,6 @@ def load_state():
     return default_state
 
 def save_state(state):
-    """നിലവിലെ വിവരങ്ങൾ JSON ഫയലിലേക്ക് സേവ് ചെയ്യുന്നു"""
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
 
@@ -168,13 +188,12 @@ def manage_active_trade(df_5m, state):
     strike = trade["strike"]
 
     if trade_type == "BUY_CE":
-        # Target 3
         if curr_close >= t3:
             msg = (
                 f"🎉 <b>FINAL TARGET 3 REACHED! (NIFTY {strike} CE)</b> 🚀\n\n"
                 f"💵 Spot CMP: <b>{curr_close:.2f}</b>\n"
-                f"💰 Profit: <b>+{curr_close - entry:.2f} pts</b>\n"
-                f"✅ <b>Action:</b> പൂർണ്ണമായും പ്രോഫിറ്റ് ബുക്ക് ചെയ്യുക!"
+                f"💰 Total Gain: <b>+{curr_close - entry:.2f} pts</b>\n"
+                f"✅ <b>Action:</b> പൂർണ്ണമായും ലാഭം എടുത്ത് എക്സിറ്റ് ചെയ്യുക!"
             )
             send_telegram(msg)
             state["completed_trades"].append({"type": trade_type, "result": "T3_HIT", "pts": curr_close - entry})
@@ -182,45 +201,40 @@ def manage_active_trade(df_5m, state):
             save_state(state)
             return True
 
-        # Target 2
         elif curr_close >= t2 and not trade.get("t2_hit"):
             trade["t2_hit"] = True
             trade["current_sl"] = t1
-            send_telegram(f"🏆 <b>TARGET 2 HIT! (NIFTY {strike} CE)</b>\n💵 CMP: {curr_close:.2f}\n🛡️ SL Trailed to T1 Level (<b>{t1:.2f}</b>)")
+            send_telegram(f"🏆 <b>TARGET 2 HIT! (NIFTY {strike} CE)</b>\n💵 CMP: {curr_close:.2f}\n🛡️ SL Trailed to T1 (<b>{t1:.2f}</b>)")
             save_state(state)
 
-        # Target 1
         elif curr_close >= t1 and not trade.get("t1_hit"):
             trade["t1_hit"] = True
             trade["current_sl"] = entry
             send_telegram(f"🎯 <b>TARGET 1 HIT! (NIFTY {strike} CE)</b>\n💵 CMP: {curr_close:.2f}\n🔒 SL Trailed to Entry Cost (<b>{entry:.2f}</b>) - RISK FREE!")
             save_state(state)
 
-        # Reversal Exit
         elif st_dir == -1 or curr_close < curr_vwap:
-            send_telegram(f"⚠️ <b>REVERSAL EXIT (NIFTY {strike} CE)</b>\nനിഫ്റ്റി VWAP-ന് താഴേക്ക് പോയി / ട്രെൻഡ് എതിരായി.\n💵 Spot CMP: {curr_close:.2f}\n🚪 എക്സിറ്റ് ചെയ്യുക.")
+            send_telegram(f"⚠️ <b>REVERSAL EXIT (NIFTY {strike} CE)</b>\nനിഫ്റ്റി VWAP-ന് താഴേക്ക് പോയി.\n💵 Spot CMP: {curr_close:.2f}\n🚪 Trade Closed.")
             state["completed_trades"].append({"type": trade_type, "result": "REVERSAL", "pts": curr_close - entry})
             state["active_trade"] = None
             save_state(state)
             return True
 
-        # Stop Loss
         elif curr_close <= current_sl:
-            alert_type = "COST-TO-COST EXIT (No Loss)" if trade.get("t1_hit") else "STOP LOSS HIT"
-            send_telegram(f"🛑 <b>{alert_type}</b>\n📌 Symbol: NIFTY {strike} CE\n💵 Exit: {curr_close:.2f}\n📊 P&L: {curr_close - entry:+.2f} pts")
+            alert_type = "COST-TO-COST EXIT" if trade.get("t1_hit") else "STOP LOSS HIT"
+            send_telegram(f"🛑 <b>{alert_type}</b>\n📌 Symbol: NIFTY {strike} CE\n💵 Exit Price: {curr_close:.2f}\n📊 P&L: {curr_close - entry:+.2f} pts")
             state["completed_trades"].append({"type": trade_type, "result": "SL_HIT", "pts": curr_close - entry})
             state["active_trade"] = None
             save_state(state)
             return True
 
     elif trade_type == "BUY_PE":
-        # Target 3
         if curr_close <= t3:
             msg = (
                 f"🎉 <b>FINAL TARGET 3 REACHED! (NIFTY {strike} PE)</b> 🚀\n\n"
                 f"💵 Spot CMP: <b>{curr_close:.2f}</b>\n"
-                f"💰 Profit: <b>+{entry - curr_close:.2f} pts</b>\n"
-                f"✅ <b>Action:</b> പൂർണ്ണമായും പ്രോഫിറ്റ് ബുക്ക് ചെയ്യുക!"
+                f"💰 Total Gain: <b>+{entry - curr_close:.2f} pts</b>\n"
+                f"✅ <b>Action:</b> പൂർണ്ണമായും ലാഭം എടുത്ത് എക്സിറ്റ് ചെയ്യുക!"
             )
             send_telegram(msg)
             state["completed_trades"].append({"type": trade_type, "result": "T3_HIT", "pts": entry - curr_close})
@@ -228,32 +242,28 @@ def manage_active_trade(df_5m, state):
             save_state(state)
             return True
 
-        # Target 2
         elif curr_close <= t2 and not trade.get("t2_hit"):
             trade["t2_hit"] = True
             trade["current_sl"] = t1
-            send_telegram(f"🏆 <b>TARGET 2 HIT! (NIFTY {strike} PE)</b>\n💵 CMP: {curr_close:.2f}\n🛡️ SL Trailed to T1 Level (<b>{t1:.2f}</b>)")
+            send_telegram(f"🏆 <b>TARGET 2 HIT! (NIFTY {strike} PE)</b>\n💵 CMP: {curr_close:.2f}\n🛡️ SL Trailed to T1 (<b>{t1:.2f}</b>)")
             save_state(state)
 
-        # Target 1
         elif curr_close <= t1 and not trade.get("t1_hit"):
             trade["t1_hit"] = True
             trade["current_sl"] = entry
             send_telegram(f"🎯 <b>TARGET 1 HIT! (NIFTY {strike} PE)</b>\n💵 CMP: {curr_close:.2f}\n🔒 SL Trailed to Entry Cost (<b>{entry:.2f}</b>) - RISK FREE!")
             save_state(state)
 
-        # Reversal Exit
         elif st_dir == 1 or curr_close > curr_vwap:
-            send_telegram(f"⚠️ <b>REVERSAL EXIT (NIFTY {strike} PE)</b>\nനിഫ്റ്റി VWAP-ന് മുകളിലേക്ക് പോയി / ട്രെൻഡ് എതിരായി.\n💵 Spot CMP: {curr_close:.2f}\n🚪 എക്സിറ്റ് ചെയ്യുക.")
+            send_telegram(f"⚠️ <b>REVERSAL EXIT (NIFTY {strike} PE)</b>\nനിഫ്റ്റി VWAP-ന് മുകളിലേക്ക് പോയി.\n💵 Spot CMP: {curr_close:.2f}\n🚪 Trade Closed.")
             state["completed_trades"].append({"type": trade_type, "result": "REVERSAL", "pts": entry - curr_close})
             state["active_trade"] = None
             save_state(state)
             return True
 
-        # Stop Loss
         elif curr_close >= current_sl:
-            alert_type = "COST-TO-COST EXIT (No Loss)" if trade.get("t1_hit") else "STOP LOSS HIT"
-            send_telegram(f"🛑 <b>{alert_type}</b>\n📌 Symbol: NIFTY {strike} PE\n💵 Exit: {curr_close:.2f}\n📊 P&L: {entry - curr_close:+.2f} pts")
+            alert_type = "COST-TO-COST EXIT" if trade.get("t1_hit") else "STOP LOSS HIT"
+            send_telegram(f"🛑 <b>{alert_type}</b>\n📌 Symbol: NIFTY {strike} PE\n💵 Exit Price: {curr_close:.2f}\n📊 P&L: {entry - curr_close:+.2f} pts")
             state["completed_trades"].append({"type": trade_type, "result": "SL_HIT", "pts": entry - curr_close})
             state["active_trade"] = None
             save_state(state)
@@ -275,7 +285,6 @@ def scan_for_entries(df_5m, state):
     atr = float(curr['ATR'])
     st_dir = int(curr['ST_Dir'])
 
-    # Dynamic ATR Sl & Targets
     sl_dist = round(max(20.0, atr * 1.2), 1)
     t1_dist = round(sl_dist * 1.0, 1)
     t2_dist = round(sl_dist * 2.0, 1)
@@ -283,7 +292,6 @@ def scan_for_entries(df_5m, state):
 
     atm_strike = int(round(close / 50.0) * 50)
     
-    # 15-Min ORB Levels
     today_candles = df_5m.between_time("09:15", "15:30")
     if len(today_candles) < 3:
         return
@@ -345,7 +353,7 @@ def check_reports_and_time(state, df_5m):
     now_ist = datetime.datetime.now(IST)
     current_time = now_ist.time()
 
-    # 3:40 PM Daily Performance Report (Telegram + Email)
+    # 3:40 PM Daily Performance Report (Telegram & Email)
     if datetime.time(15, 40) <= current_time <= datetime.time(15, 55) and not state.get("daily_report_sent"):
         trades = state.get("completed_trades", [])
         total_pts = sum([t["pts"] for t in trades])
@@ -356,25 +364,20 @@ def check_reports_and_time(state, df_5m):
             f"📊 <b>NIFTY 50 DAILY PERFORMANCE REPORT</b>\n"
             f"📅 Date: {now_ist.strftime('%d-%m-%Y')}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔢 Total Trades Taken: <b>{len(trades)}</b>\n"
+            f"🔢 Total Trades: <b>{len(trades)}</b>\n"
             f"✅ Wins: <b>{wins}</b> | ❌ Losses: <b>{losses}</b>\n"
-            f"💰 Net P&L Points: <b>{total_pts:+.2f} pts</b>\n"
+            f"💰 Net P&L: <b>{total_pts:+.2f} pts</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🤖 <i>Trading Bot Session Closed for Today.</i>"
         )
         send_telegram(report_msg)
-        
-        # Email Dispatch
-        email_sub = f"📊 NIFTY 50 Performance Report - {now_ist.strftime('%d-%m-%Y')}"
-        send_email(email_sub, report_msg.replace("\n", "<br>"))
-        
+        send_email(f"📊 NIFTY 50 Daily Report - {now_ist.strftime('%d-%m-%Y')}", report_msg.replace("\n", "<br>"))
         state["daily_report_sent"] = True
         save_state(state)
 
-    # എക്സ്പയറി ഡേ ഡിറ്റക്ഷൻ (അവധി കാരണം ദിവസം മാറിയാലും തിരിച്ചറിയും)
+    # Expiry Check
     if not state.get("expiry_report_sent") and current_time >= datetime.time(15, 30):
-        # NSE കലണ്ടർ പ്രകാരം അടുത്ത ട്രേഡിംഗ് ഡേ പരിശോധിച്ചു എക്സ്പയറി ഉറപ്പാക്കുന്നു
-        is_expiry_day = (now_ist.strftime('%A') in ['Thursday', 'Tuesday']) # നിലവിലെ എക്സ്പയറി സൈക്കിൾ അനുസരിച്ച്
+        is_expiry_day = (now_ist.strftime('%A') in ['Thursday', 'Tuesday'])
         if is_expiry_day:
             trades = state.get("completed_trades", [])
             total_pts = sum([t["pts"] for t in trades])
@@ -382,8 +385,8 @@ def check_reports_and_time(state, df_5m):
                 f"🎯 <b>NIFTY EXPIRY SPECIAL CLOSING REPORT</b>\n"
                 f"📅 Date: {now_ist.strftime('%d-%m-%Y')} ({now_ist.strftime('%A')})\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"✨ Expiry Day Trades Monitored Successfully.\n"
-                f"💰 Total Expiry Net Points: <b>{total_pts:+.2f} pts</b>\n"
+                f"✨ Expiry Session Monitored Successfully.\n"
+                f"💰 Total Net Gain: <b>{total_pts:+.2f} pts</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━"
             )
             send_telegram(expiry_msg)
@@ -398,13 +401,13 @@ def main():
     now_ist = datetime.datetime.now(IST)
     current_time = now_ist.time()
 
-    # 1. ബോട്ട് ആദ്യമായി റൺ ആകുമ്പോൾ സ്റ്റാർട്ട് അലേർട്ട് അയക്കുന്നു
+    # 1. ബോട്ട് സ്റ്റാർട്ട് അലേർട്ട് (Channel & Admin-ലേക്ക് എത്തും)
     if not state.get("startup_alert_sent"):
         startup_msg = (
             f"🟢 <b>NIFTY PRO BOT STARTED!</b>\n"
             f"⏰ <b>Time:</b> {now_ist.strftime('%H:%M:%S')} IST\n"
             f"📅 <b>Date:</b> {now_ist.strftime('%d-%m-%Y')}\n"
-            f"📡 <b>Status:</b> Active (Telegram & Email Linked)\n"
+            f"📡 <b>Status:</b> Broadcast Active (Channel & Admin Linked)\n"
             f"⏱ <b>Scan Window:</b> 09:00 AM - 03:40 PM"
         )
         send_telegram(startup_msg)
@@ -419,14 +422,14 @@ def main():
     df_5m['ATR'] = calculate_atr(df_5m, 14)
     df_5m['Supertrend'], df_5m['ST_Dir'] = calculate_supertrend(df_5m, 10, 2.0)
 
-    # 2. നിലവിൽ ഓപ്പൺ ട്രേഡ് ഉണ്ടെങ്കിൽ ട്രാക്ക് ചെയ്യുന്നു
+    # 2. Manage Active Trades
     has_active = manage_active_trade(df_5m, state)
 
-    # 3. ഓപ്പൺ ട്രേഡ് ഇല്ലെങ്കിൽ പുതിയ എൻട്രികൾ സ്കാൻ ചെയ്യുന്നു (9:00 AM - 3:20 PM)
+    # 3. Scan For Entries
     if not has_active and datetime.time(9, 0) <= current_time < datetime.time(15, 20):
         scan_for_entries(df_5m, state)
 
-    # 4. 3:40 PM ഡെയ്‌ലി & എക്സ്പയറി റിപ്പോർട്ടുകൾ അയക്കുന്നു
+    # 4. Reports Check (3:40 PM)
     check_reports_and_time(state, df_5m)
 
 if __name__ == "__main__":
