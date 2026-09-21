@@ -13,12 +13,12 @@ import yfinance as yf
 
 # ----------------- DIRECT CONFIGURATION -----------------
 # 1. Telegram Bot 1 (New Bot - Channel & Admin)
-BOT_1_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN_1", "8804327561:AAHYL_srWzPSWCZR5aJe_tM0fD24HblsL_Q")
+BOT_1_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN_1", "8941192045:AAELQ21ZiFKnHMMysyOoMue-hzMgS9ZjotQ")
 BOT_1_ADMIN_ID = os.getenv("TELEGRAM_CHAT_ID_1", "6789591588")
 BOT_1_CHANNEL_ID = "-1004416495917"
 
 # 2. Telegram Bot 2 (Ayyappa Backup Bot)
-BOT_2_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN_2", "8941192045:AAELQ21ZiFKnHMMySyOoMue-hzMgS9ZjotQ")
+BOT_2_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN_2", "8921879577:AAHR_GPiDLyTtsrtMZx12CJ2nCM-YAUh3N0")
 BOT_2_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID_2", "8996427731")
 
 # 3. Gmail Configuration
@@ -204,7 +204,9 @@ def manage_active_trade(df_5m, state):
     return True
 
 def scan_for_entries(df_5m, state):
-    if state["signals_count"] >= state["max_signals"]:
+if state.get("signals_count", 0) >= state.get("max_signals", 5):
+        return
+
         return
 
     curr = df_5m.iloc[-1]
