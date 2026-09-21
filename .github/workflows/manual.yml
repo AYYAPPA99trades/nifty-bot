@@ -1,7 +1,20 @@
 name: Nifty Pro Multi-Bot Scanner
 
 on:
-  workflow_dispatch:
+  schedule:
+    # 03:30 UTC = 09:00 AM IST (Pre-Market Preparation)
+    - cron: '30 3 * * 1-5'
+    
+    # 03:38 UTC = 09:08 AM IST (Pre-Market Levels Alert)
+    - cron: '38 3 * * 1-5'
+    
+    # 04:00 - 09:30 UTC = 09:30 AM - 03:00 PM IST (Live Scan every 15 minutes)
+    - cron: '0,15,30,45 4-9 * * 1-5'
+    
+    # 10:15 UTC = 03:45 PM IST (EOD Summary & Expiry PDF Report)
+    - cron: '15 10 * * 1-5'
+
+  workflow_dispatch: # ആവശ്യമെങ്കിൽ മാനുവലായി റൺ ചെയ്യാനുള്ള ബട്ടൺ
 
 permissions:
   contents: write
@@ -30,5 +43,15 @@ jobs:
           TELEGRAM_CHAT_ID_1: ${{ secrets.TELEGRAM_CHAT_ID_1 }}
           TELEGRAM_BOT_TOKEN_2: ${{ secrets.TELEGRAM_BOT_TOKEN_2 }}
           TELEGRAM_CHAT_ID_2: ${{ secrets.TELEGRAM_CHAT_ID_2 }}
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         run: |
           python master_bot.py
+
+      - name: Commit State File
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add trade_state_pro.json || true
+          git commit -m "Update daily trade state [skip ci]" || true
+          git push || true
