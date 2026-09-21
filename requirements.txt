@@ -1,7 +1,5 @@
-yfinance
-pandas
-numpy
-requests
-pytz
-matplotlib
-reportlab
+yfinance>=0.2.35
+pandas>=2.0.0
+numpy>=1.24.0
+requests>=2.31.0
+pytz>=2023.3
