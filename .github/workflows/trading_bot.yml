@@ -37,4 +37,4 @@ jobs:
           CHANNEL_CHAT_ID: ${{ secrets.CHANNEL_CHAT_ID }}
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-        run: python master_engine.py
+        run: python master_bot.py
