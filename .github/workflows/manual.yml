@@ -2,15 +2,22 @@ name: Nifty Pro Multi-Scanner
 
 on:
   schedule:
-    # 03:30 UTC = 09:00 AM IST മുതൽ 10:20 UTC = 03:50 PM IST വരെ
+    # തിങ്കൾ മുതൽ വെള്ളി വരെ ഇന്ത്യൻ സമയം (IST) രാവിലെ 9:00 AM മുതൽ വൈകുന്നേരം 3:50 PM വരെ
+    # 03:30 UTC = 09:00 AM IST (Pre-Market / Startup)
     - cron: '30,45 3 * * 1-5'
+    # 04:00 - 09:45 UTC = 09:30 AM - 03:15 PM IST (Intraday Scanner)
     - cron: '0,15,30,45 4-9 * * 1-5'
-    - cron: '0,15,30,45,50 10 * * 1-5'
-  workflow_dispatch:
+    # 10:10 UTC = 03:40 PM IST (Daily Performance Closing Report)
+    - cron: '10 10 * * 1-5'
+  workflow_dispatch: # മാനുവലായി 'Run workflow' ക്ലിക്ക് ചെയ്ത് ടെസ്റ്റ് ചെയ്യാൻ
+
+permissions:
+  contents: write
 
 jobs:
   run-scanner:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -21,14 +28,13 @@ jobs:
           python-version: '3.11'
 
       - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install yfinance pandas numpy requests pytz
+        run: pip install yfinance pandas numpy requests pytz
 
-
-          - name: Run Master Engine
-            run: |
-          python *.py
-
-
-      
+      - name: Run Master Engine
+        env:
+          PRIMARY_BOT_TOKEN: ${{ secrets.PRIMARY_BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+          CHANNEL_CHAT_ID: ${{ secrets.CHANNEL_CHAT_ID }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+        run: python master_engine.py
