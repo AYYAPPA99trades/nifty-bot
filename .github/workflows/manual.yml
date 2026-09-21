@@ -22,8 +22,9 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install yfinance pandas numpy requests pytz
+
 
           - name: Run Master Engine
             run: |
