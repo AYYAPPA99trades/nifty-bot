@@ -33,7 +33,6 @@ IST = pytz.timezone("Asia/Kolkata")
 
 def send_telegram(text: str):
     """Ellam Telegram Chats-lum Channels-lum alert ayakunnu"""
-    # Bot 1 -> Admin & Channel
     if BOT_1_TOKEN:
         url1 = f"https://api.telegram.org/bot{BOT_1_TOKEN}/sendMessage"
         for target_id in [BOT_1_ADMIN_ID, BOT_1_CHANNEL_ID]:
@@ -43,7 +42,6 @@ def send_telegram(text: str):
                 except Exception as e:
                     print(f"Error Bot 1 ({target_id}): {e}")
 
-    # Bot 2 -> Chat ID
     if BOT_2_TOKEN and BOT_2_CHAT_ID:
         url2 = f"https://api.telegram.org/bot{BOT_2_TOKEN}/sendMessage"
         try:
@@ -204,9 +202,7 @@ def manage_active_trade(df_5m, state):
     return True
 
 def scan_for_entries(df_5m, state):
-if state.get("signals_count", 0) >= state.get("max_signals", 5):
-        return
-
+    if state.get("signals_count", 0) >= state.get("max_signals", 5):
         return
 
     curr = df_5m.iloc[-1]
