@@ -1,5 +1,4 @@
-smartapi-python
-pyotp
-requests
 pandas
-numpy
+pandas-ta
+yfinance
+requests
