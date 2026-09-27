@@ -1,40 +1,33 @@
-name: Nifty Pro Multi-Scanner
+name: SAS LEVEL TRACKER Bot
 
 on:
+  # മാർക്കറ്റ് ദിവസങ്ങളിൽ (തിങ്കൾ മുതൽ വെള്ളി വരെ) രാവിലെ 9:00 മുതൽ വൈകുന്നേരം 3:40 വരെ
+  # UTC ടൈം സോൺ അനുസരിച്ചാണ് ക്രോൺ (Cron) പ്രവർത്തിക്കുന്നത് (IST-യിൽ നിന്ന് 5.5 മണിക്കൂർ കുറവാണ്).
+  # 9:00 AM IST = 3:30 AM UTC | 3:40 PM IST = 10:10 PM UTC
   schedule:
-    # തിങ്കൾ മുതൽ വെള്ളി വരെ ഇന്ത്യൻ സമയം (IST) രാവിലെ 9:00 AM മുതൽ വൈകുന്നേരം 3:50 PM വരെ
-    # 03:30 UTC = 09:00 AM IST (Pre-Market / Startup)
-    - cron: '30,45 3 * * 1-5'
-    # 04:00 - 09:45 UTC = 09:30 AM - 03:15 PM IST (Intraday Scanner)
-    - cron: '0,15,30,45 4-9 * * 1-5'
-    # 10:10 UTC = 03:40 PM IST (Daily Performance Closing Report)
-    - cron: '10 10 * * 1-5'
-  workflow_dispatch: # മാനുവലായി 'Run workflow' ക്ലിക്ക് ചെയ്ത് ടെസ്റ്റ് ചെയ്യാൻ
+    - cron: '30-40/3 3-10 * * 1-5'  # തിങ്കൾ മുതൽ വെള്ളി വരെ દર 3 മിനിറ്റിലും റൺ ചെയ്യും
 
-permissions:
-  contents: write
+  # മാന്വൽ ആയി റൺ ചെയ്യാനുള്ള ഓപ്ഷൻ
+  workflow_dispatch:
 
 jobs:
-  run-scanner:
+  run-bot:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
 
-      - name: Install Dependencies
-        run: pip install yfinance pandas numpy requests pytz
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-      - name: Run Master Engine
-        env:
-          PRIMARY_BOT_TOKEN: ${{ secrets.PRIMARY_BOT_TOKEN }}
-          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
-          CHANNEL_CHAT_ID: ${{ secrets.CHANNEL_CHAT_ID }}
-          EMAIL_USER: ${{ secrets.EMAIL_USER }}
-          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-        run: python master_bot.py
+    - name: Run Scalping Bot
+      run: |
+        python bot.py  # നിങ്ങളുടെ പൈത്തൺ ഫയലിന്റെ പേര് ഇവിടെ നൽകുക (ഉദാഹരണത്തിന് main.py ആണെങ്കിൽ അങ്ങനെ മാറ്റുക)
