@@ -42,7 +42,7 @@ def fetch_3min_data():
     return df
 
 def calculate_indicators(df):
-    # EMA 9 & EMA 21 계산
+    # EMA 9 & EMA 21 Calculation
     df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
     
