@@ -11,7 +11,7 @@ TELEGRAM_CONFIGS = [
         "role": "admin",
     },
     {
-        "bot_token": "8804327561:AAECrvtU0MCYB80L0ZchoKy_YDpwJ52zQA8",
+        "bot_token": "8921879577:AAHR_GPiDLyTtsrtMZx12CJ2nCM-YAUh3N0p",
         "chat_id": "6789591588",
         "role": "public",
     },
