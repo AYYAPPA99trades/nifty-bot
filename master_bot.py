@@ -1,7 +1,6 @@
 import datetime
 import requests
 import pandas as pd
-import pandas_ta as ta
 import yfinance as yf
 
 # ടെലഗ്രാം ക്രമീകരണങ്ങൾ
@@ -42,6 +41,26 @@ def fetch_3min_data():
     df.dropna(inplace=True)
     return df
 
+def calculate_indicators(df):
+    # EMA 9 & EMA 21 계산
+    df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
+    df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
+    
+    # VWAP Calculation
+    q = df['Volume']
+    tp = (df['High'] + df['Low'] + df['Close']) / 3
+    df['VWAP'] = (tp * q).cumsum() / q.cumsum()
+    
+    # ATR (14) Calculation
+    high_low = df['High'] - df['Low']
+    high_close = (df['High'] - df['Close'].shift()).abs()
+    low_close = (df['Low'] - df['Close'].shift()).abs()
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = ranges.max(axis=1)
+    df['ATR'] = true_range.rolling(14).mean()
+    
+    return df
+
 def calculate_support_resistance(df):
     high = df["High"].max()
     low = df["Low"].min()
@@ -60,14 +79,12 @@ def run_bot_tasks():
 
     print(f"{BOT_NAME} initialized and running...")
 
-    # 1. 9:00 AM Auto Run Alert (അഡ്മിന് മാത്രം)
     if now >= market_open and now < support_resistance_time:
         send_telegram_message(
             "🟢 Bot auto run started successfully with zero delay backup at 9:00 AM.",
             target_role="admin",
         )
 
-    # 2. 9:05 AM Support & Resistance (അഡ്മിനും ഗ്രൂപ്പിനും)
     if now >= support_resistance_time and now < trading_start:
         df = fetch_3min_data()
         support, resistance = calculate_support_resistance(df)
@@ -78,16 +95,12 @@ def run_bot_tasks():
         )
         send_telegram_message(msg, target_role="all")
 
-    # 3. 9:15 AM to 3:30 PM Trading Signals (ATR Based SL & Targets)
     if now >= trading_start and now <= trading_end:
         df = fetch_3min_data()
         if df.empty:
             return
 
-        df["EMA_9"] = ta.ema(df["Close"], length=9)
-        df["EMA_21"] = ta.ema(df["Close"], length=21)
-        df["VWAP"] = ta.vwap(df["High"], df["Low"], df["Close"], df["Volume"])
-        df["ATR"] = ta.atr(df["High"], df["Low"], df["Close"], length=14)
+        df = calculate_indicators(df)
 
         last_row = df.iloc[-2]
         close_price = last_row["Close"]
@@ -104,13 +117,12 @@ def run_bot_tasks():
 
         timestamp = df.index[-2]
 
-        # ATR അടിസ്ഥാനമാക്കിയുള്ള ടാർഗെറ്റും സ്റ്റോപ്പ് ലോസും
         if signal == 1:
             entry = close_price
-            sl = entry - (1.0 * atr)       # ATR അടിസ്ഥാനമാക്കിയുള്ള SL
-            t1 = entry + (1.0 * atr)       # T1 (1:1 Risk-Reward)
-            t2 = entry + (2.0 * atr)       # T2 (1:2 Risk-Reward)
-            t3 = entry + (3.0 * atr)       # T3 (1:3 Risk-Reward)
+            sl = entry - (1.0 * atr)
+            t1 = entry + (1.0 * atr)
+            t2 = entry + (2.0 * atr)
+            t3 = entry + (3.0 * atr)
 
             msg = (
                 f"🚀 *BUY SIGNAL* 🚀\n"
@@ -125,10 +137,10 @@ def run_bot_tasks():
 
         elif signal == -1:
             entry = close_price
-            sl = entry + (1.0 * atr)       # ATR അടിസ്ഥാനമാക്കിയുള്ള SL
-            t1 = entry - (1.0 * atr)       # T1
-            t2 = entry - (2.0 * atr)       # T2
-            t3 = entry - (3.0 * atr)       # T3
+            sl = entry + (1.0 * atr)
+            t1 = entry - (1.0 * atr)
+            t2 = entry - (2.0 * atr)
+            t3 = entry - (3.0 * atr)
 
             msg = (
                 f"🔻 *SELL SIGNAL* 🔻\n"
