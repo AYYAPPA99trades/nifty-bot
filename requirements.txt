@@ -1,4 +1,3 @@
 pandas
 yfinance
 requests
-git+https://github.com/twopirllc/pandas-ta.git
