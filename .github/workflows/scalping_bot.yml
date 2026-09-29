@@ -2,7 +2,7 @@ name: SAS LEVEL TRACKER Continuous Engine
 
 on:
   schedule:
-    # Runs Monday to Friday at UTC 03:25 AM (IST 08:55 AM)
+    # Monday to Friday at UTC 03:25 AM (IST 08:55 AM)
     - cron: '25 3 * * 1-5'
   workflow_dispatch:
 
@@ -34,7 +34,4 @@ jobs:
             trade-state-
 
       - name: Run Trading System
-        env:
-          TELEGRAM_TOKENS: ${{ secrets.TELEGRAM_TOKENS }}
-          TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
         run: python scalper.py
