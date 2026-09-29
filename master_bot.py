@@ -24,15 +24,22 @@ DATA_LOG_FILE = "trade_history.json"
 ADMIN_EMAIL_ADDRESS = "Shinos99@gmail.com"
 ADMIN_EMAIL_PASSWORD = "Qm1mu8xU"
 
+# Fixed Telegram Configuration
+TELEGRAM_TOKENS = [
+    "8941192045:AAELQ21ZiFKnHMMysyOoMue-hzMgS9ZjotQ"
+]
+
+TELEGRAM_CHAT_IDS = [
+    "8996427731",  # Admin Chat ID
+    "6789591588"   # Secondary Chat ID
+]
+
 # ----------------- TELEGRAM & EMAIL FUNCTIONS -----------------
 def send_telegram(message, admin_only=False):
-    tokens = [t.strip() for t in os.getenv('TELEGRAM_TOKENS', '').split(',') if t.strip()]
-    chat_ids = [c.strip() for c in os.getenv('TELEGRAM_CHAT_IDS', '').split(',') if c.strip()]
-
-    target_chats = [chat_ids[0]] if (admin_only and chat_ids) else chat_ids
+    target_chats = [TELEGRAM_CHAT_IDS[0]] if admin_only else TELEGRAM_CHAT_IDS
     formatted_msg = f"SAS LEVEL TRACKER\n\n{message}"
 
-    for token in tokens:
+    for token in TELEGRAM_TOKENS:
         for cid in target_chats:
             url = f"https://api.telegram.org/bot{token}/sendMessage"
             payload = {
@@ -46,12 +53,9 @@ def send_telegram(message, admin_only=False):
                 print(f"Telegram Error: {e}")
 
 def send_telegram_file(file_path, caption):
-    tokens = [t.strip() for t in os.getenv('TELEGRAM_TOKENS', '').split(',') if t.strip()]
-    chat_ids = [c.strip() for c in os.getenv('TELEGRAM_CHAT_IDS', '').split(',') if c.strip()]
-    
     caption_text = f"SAS LEVEL TRACKER\n{caption}"
-    for token in tokens:
-        for cid in chat_ids:
+    for token in TELEGRAM_TOKENS:
+        for cid in TELEGRAM_CHAT_IDS:
             url = f"https://api.telegram.org/bot{token}/sendDocument"
             try:
                 with open(file_path, 'rb') as f:
