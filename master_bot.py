@@ -1,157 +1,395 @@
-import datetime
-import requests
-import pandas as pd
+import os
+import json
+import time
+import smtplib
+from datetime import datetime, date, timedelta
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email import encoders
+
 import yfinance as yf
+import pandas as pd
+import ta
+import requests
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
 
-# ടെലഗ്രാം ക്രമീകരണങ്ങൾ
-TELEGRAM_CONFIGS = [
-    {
-        "bot_token": "8941192045:AAELQ21ZiFKnHMMysyOoMue-hzMgS9ZjotQ",
-        "chat_id": "8996427731",
-        "role": "admin",
-    },
-    {
-        "bot_token": "8921879577:AAHR_GPiDLyTtsrtMZx12CJ2nCM-YAUh3N0p",
-        "chat_id": "6789591588",
-        "role": "public",
-    },
-]
+STATE_FILE = "trade_state.json"
+DATA_LOG_FILE = "trade_history.json"
 
-BOT_NAME = "SAS LEVEL TRACKER"
+# Fixed Admin Email Credentials
+ADMIN_EMAIL_ADDRESS = "Shinos99@gmail.com"
+ADMIN_EMAIL_PASSWORD = "Qm1mu8xU"
 
-def send_telegram_message(message, target_role="all"):
-    for config in TELEGRAM_CONFIGS:
-        if target_role == "admin" and config["role"] != "admin":
-            continue
-        url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
-        payload = {
-            "chat_id": config["chat_id"],
-            "text": f"🤖 *{BOT_NAME}*\n\n{message}",
-            "parse_mode": "Markdown",
-        }
+# ----------------- TELEGRAM & EMAIL FUNCTIONS -----------------
+def send_telegram(message, admin_only=False):
+    tokens = [t.strip() for t in os.getenv('TELEGRAM_TOKENS', '').split(',') if t.strip()]
+    chat_ids = [c.strip() for c in os.getenv('TELEGRAM_CHAT_IDS', '').split(',') if c.strip()]
+
+    target_chats = [chat_ids[0]] if (admin_only and chat_ids) else chat_ids
+    formatted_msg = f"SAS LEVEL TRACKER\n\n{message}"
+
+    for token in tokens:
+        for cid in target_chats:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            payload = {
+                "chat_id": cid,
+                "text": formatted_msg,
+                "parse_mode": "Markdown"
+            }
+            try:
+                requests.post(url, json=payload, timeout=8)
+            except Exception as e:
+                print(f"Telegram Error: {e}")
+
+def send_telegram_file(file_path, caption):
+    tokens = [t.strip() for t in os.getenv('TELEGRAM_TOKENS', '').split(',') if t.strip()]
+    chat_ids = [c.strip() for c in os.getenv('TELEGRAM_CHAT_IDS', '').split(',') if c.strip()]
+    
+    caption_text = f"SAS LEVEL TRACKER\n{caption}"
+    for token in tokens:
+        for cid in chat_ids:
+            url = f"https://api.telegram.org/bot{token}/sendDocument"
+            try:
+                with open(file_path, 'rb') as f:
+                    requests.post(
+                        url,
+                        data={'chat_id': cid, 'caption': caption_text, 'parse_mode': 'Markdown'},
+                        files={'document': f},
+                        timeout=20
+                    )
+            except Exception as e:
+                print(f"Telegram File Send Error: {e}")
+
+def send_email_with_pdf(file_path, subject):
+    msg = MIMEMultipart()
+    msg['From'] = ADMIN_EMAIL_ADDRESS
+    msg['To'] = ADMIN_EMAIL_ADDRESS
+    msg['Subject'] = f"SAS LEVEL TRACKER - {subject}"
+    msg.attach(MIMEText("Please find the attached PDF trade report.", 'plain'))
+
+    try:
+        with open(file_path, 'rb') as attachment:
+            part = MIMEBase('application', 'octet-stream')
+            part.set_payload(attachment.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(file_path)}"')
+            msg.attach(part)
+
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(ADMIN_EMAIL_ADDRESS, ADMIN_EMAIL_PASSWORD)
+        server.sendmail(ADMIN_EMAIL_ADDRESS, ADMIN_EMAIL_ADDRESS, msg.as_string())
+        server.quit()
+        print("Email sent successfully.")
+    except Exception as e:
+        print(f"Email Dispatch Error: {e}")
+
+# ----------------- STATE BACKUP & RECOVERY -----------------
+def load_state():
+    if os.path.exists(STATE_FILE):
         try:
-            requests.post(url, json=payload)
-        except Exception as e:
-            print(f"Error: {e}")
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"trade": None, "sr_sent": False, "heartbeat_sent": False}
 
-def fetch_3min_data():
-    df = yf.download(tickers="^NSEI", period="2d", interval="3m")
+def save_state(state):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=4)
+
+def log_trade(trade_record):
+    trades = []
+    if os.path.exists(DATA_LOG_FILE):
+        try:
+            with open(DATA_LOG_FILE, "r") as f:
+                trades = json.load(f)
+        except Exception:
+            trades = []
+    trades.append(trade_record)
+    with open(DATA_LOG_FILE, "w") as f:
+        json.dump(trades, f, indent=4)
+
+# ----------------- PIVOT LEVELS (09:05 AM) -----------------
+def get_daily_levels():
+    df = yf.download('^NSEI', period='5d', interval='1d', progress=False)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
-    df.dropna(inplace=True)
-    return df
+    prev = df.iloc[-2]
+    h, l, c = prev['High'], prev['Low'], prev['Close']
+    pivot = (h + l + c) / 3
+    r1 = (2 * pivot) - l
+    s1 = (2 * pivot) - h
+    r2 = pivot + (h - l)
+    s2 = pivot - (h - l)
+    return round(pivot, 2), round(r1, 2), round(r2, 2), round(s1, 2), round(s2, 2)
 
-def calculate_indicators(df):
-    # EMA 9 & EMA 21 Calculation
-    df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
-    df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
+# ----------------- PDF GENERATOR -----------------
+def generate_pdf(report_type="Daily"):
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    pdf_filename = f"{report_type}_Report_{today_str}.pdf"
     
-    # VWAP Calculation
-    q = df['Volume']
-    tp = (df['High'] + df['Low'] + df['Close']) / 3
-    df['VWAP'] = (tp * q).cumsum() / q.cumsum()
-    
-    # ATR (14) Calculation
-    high_low = df['High'] - df['Low']
-    high_close = (df['High'] - df['Close'].shift()).abs()
-    low_close = (df['Low'] - df['Close'].shift()).abs()
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = ranges.max(axis=1)
-    df['ATR'] = true_range.rolling(14).mean()
-    
-    return df
+    trades = []
+    if os.path.exists(DATA_LOG_FILE):
+        with open(DATA_LOG_FILE, "r") as f:
+            all_trades = json.load(f)
+            if report_type == "Daily":
+                trades = [t for t in all_trades if t.get('date') == today_str]
+            else:
+                curr_month = datetime.now().strftime("%Y-%m")
+                trades = [t for t in all_trades if str(t.get('date', '')).startswith(curr_month)]
 
-def calculate_support_resistance(df):
-    high = df["High"].max()
-    low = df["Low"].min()
-    close = df["Close"].iloc[-1]
-    pivot = (high + low + close) / 3
-    resistance_1 = (2 * pivot) - low
-    support_1 = (2 * pivot) - high
-    return support_1, resistance_1
+    doc = SimpleDocTemplate(pdf_filename, pagesize=letter)
+    styles = getSampleStyleSheet()
+    elements = [
+        Paragraph("<b>SAS LEVEL TRACKER</b>", styles['Title']),
+        Paragraph(f"<b>{report_type} Trading Performance Report ({today_str})</b>", styles['Heading2']),
+        Spacer(1, 15)
+    ]
 
-def run_bot_tasks():
-    now = datetime.datetime.now().time()
-    market_open = datetime.time(9, 0)
-    support_resistance_time = datetime.time(9, 5)
-    trading_start = datetime.time(9, 15)
-    trading_end = datetime.time(15, 30)
+    table_data = [["Time", "Type", "Entry", "Exit", "Exit Reason", "Points P&L"]]
+    total_pts = 0.0
 
-    print(f"{BOT_NAME} initialized and running...")
+    for t in trades:
+        pnl = round(t.get('pnl', 0.0), 2)
+        total_pts += pnl
+        table_data.append([
+            t.get('time', ''),
+            t.get('type', ''),
+            str(t.get('entry', '')),
+            str(t.get('exit', '')),
+            t.get('reason', ''),
+            f"{pnl:+} pts"
+        ])
 
-    if now >= market_open and now < support_resistance_time:
-        send_telegram_message(
-            "🟢 Bot auto run started successfully with zero delay backup at 9:00 AM.",
-            target_role="admin",
-        )
+    table_data.append(["", "", "", "", "Total P&L", f"{round(total_pts, 2):+} pts"])
 
-    if now >= support_resistance_time and now < trading_start:
-        df = fetch_3min_data()
-        support, resistance = calculate_support_resistance(df)
-        msg = (
-            f"📊 *Nifty Support & Resistance Levels*\n"
-            f"Support: `{support:.2f}`\n"
-            f"Resistance: `{resistance:.2f}`"
-        )
-        send_telegram_message(msg, target_role="all")
+    table = Table(table_data, colWidths=[65, 55, 65, 65, 110, 85])
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#ECF0F1")),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold')
+    ]))
+    elements.append(table)
+    doc.build(elements)
+    return pdf_filename
 
-    if now >= trading_start and now <= trading_end:
-        df = fetch_3min_data()
-        if df.empty:
-            return
+def is_monthly_expiry_today():
+    today = date.today()
+    if today.weekday() != 3:
+        return False
+    next_thurs = today + timedelta(days=7)
+    return next_thurs.month != today.month
 
-        df = calculate_indicators(df)
+# ----------------- MAIN ENGINE -----------------
+def run_trading_bot():
+    state = load_state()
+    print("SAS LEVEL TRACKER System Running...")
 
-        last_row = df.iloc[-2]
-        close_price = last_row["Close"]
-        vwap = last_row["VWAP"]
-        ema9 = last_row["EMA_9"]
-        ema21 = last_row["EMA_21"]
-        atr = last_row["ATR"]
+    while True:
+        now = datetime.now()
+        current_time_str = now.strftime("%H:%M")
 
-        signal = 0
-        if close_price > vwap and ema9 > ema21:
-            signal = 1
-        elif close_price < vwap and ema9 < ema21:
-            signal = -1
+        if now.weekday() >= 5:
+            time.sleep(60)
+            continue
 
-        timestamp = df.index[-2]
+        # 1. 09:00 AM - Auto Run Admin Alert
+        if current_time_str == "09:00" and not state.get("heartbeat_sent"):
+            send_telegram("Bot Auto Run Initialized\nData link active. Waiting for market open.", admin_only=True)
+            state["heartbeat_sent"] = True
+            save_state(state)
 
-        if signal == 1:
-            entry = close_price
-            sl = entry - (1.0 * atr)
-            t1 = entry + (1.0 * atr)
-            t2 = entry + (2.0 * atr)
-            t3 = entry + (3.0 * atr)
-
+        # 2. 09:05 AM - Nifty Resistance & Support
+        if current_time_str == "09:05" and not state.get("sr_sent"):
+            p, r1, r2, s1, s2 = get_daily_levels()
             msg = (
-                f"🚀 *BUY SIGNAL* 🚀\n"
-                f"⏰ Time: `{timestamp}`\n"
-                f"💰 Entry Price: `{entry:.2f}`\n"
-                f"🎯 T1: `{t1:.2f}`\n"
-                f"🎯 T2: `{t2:.2f}`\n"
-                f"🎯 T3: `{t3:.2f}`\n"
-                f"🛡️ SL: `{sl:.2f}`"
+                f"NIFTY 50 DAILY LEVELS\n\n"
+                f"Resistance 2 (R2): {r2}\n"
+                f"Resistance 1 (R1): {r1}\n"
+                f"Pivot Point: {p}\n"
+                f"Support 1 (S1): {s1}\n"
+                f"Support 2 (S2): {s2}"
             )
-            send_telegram_message(msg, target_role="all")
+            send_telegram(msg, admin_only=False)
+            state["sr_sent"] = True
+            save_state(state)
 
-        elif signal == -1:
-            entry = close_price
-            sl = entry + (1.0 * atr)
-            t1 = entry - (1.0 * atr)
-            t2 = entry - (2.0 * atr)
-            t3 = entry - (3.0 * atr)
+        # 3. 09:15 AM to 03:10 PM - Live Trade Execution & Monitoring
+        if "09:15" <= current_time_str <= "15:10":
+            try:
+                df = yf.download('^NSEI', period='1d', interval='1m', progress=False)
+                if not df.empty and len(df) >= 25:
+                    if isinstance(df.columns, pd.MultiIndex):
+                        df.columns = df.columns.get_level_values(0)
 
-            msg = (
-                f"🔻 *SELL SIGNAL* 🔻\n"
-                f"⏰ Time: `{timestamp}`\n"
-                f"💰 Entry Price: `{entry:.2f}`\n"
-                f"🎯 T1: `{t1:.2f}`\n"
-                f"🎯 T2: `{t2:.2f}`\n"
-                f"🎯 T3: `{t3:.2f}`\n"
-                f"🛡️ SL: `{sl:.2f}`"
-            )
-            send_telegram_message(msg, target_role="all")
+                    df['ema_fast'] = ta.trend.ema_indicator(df['Close'], window=9)
+                    df['ema_slow'] = ta.trend.ema_indicator(df['Close'], window=21)
+                    df['rsi'] = ta.momentum.rsi(df['Close'], window=14)
+                    df['atr'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
+                    df['vwap'] = ((df['High'] + df['Low'] + df['Close']) / 3 * df['Volume']).cumsum() / df['Volume'].cumsum()
+
+                    curr = df.iloc[-1]
+                    prev = df.iloc[-2]
+                    ltp = round(curr['Close'], 2)
+                    atr = round(curr['atr'], 2)
+                    vwap = round(curr['vwap'], 2)
+                    rsi = round(curr['rsi'], 2)
+
+                    trade = state.get("trade")
+
+                    buy_trigger = (prev['ema_fast'] <= prev['ema_slow'] and curr['ema_fast'] > curr['ema_slow'] and rsi > 50 and ltp > vwap)
+                    sell_trigger = (prev['ema_fast'] >= prev['ema_slow'] and curr['ema_fast'] < curr['ema_slow'] and rsi < 50 and ltp < vwap)
+
+                    # ----- ACTIVE TRADE TRACKING -----
+                    if trade:
+                        # BUY TRADE CHECKS
+                        if trade['type'] == "BUY":
+                            # Target 1 Hit
+                            if ltp >= trade['t1'] and not trade['t1_hit']:
+                                trade['t1_hit'] = True
+                                trade['sl'] = None  # Remove Stop Loss after T1
+                                save_state(state)
+                                send_telegram(f"TARGET 1 REACHED (BUY)\nPrice: {ltp}\nNote: Stop Loss removed. Hold for T2 and T3.")
+
+                            # Target 2 Hit
+                            if ltp >= trade['t2'] and not trade['t2_hit']:
+                                trade['t2_hit'] = True
+                                save_state(state)
+                                send_telegram(f"TARGET 2 REACHED (BUY)\nPrice: {ltp}\nHold for T3.")
+
+                            # Target 3 Hit (Full Exit)
+                            if ltp >= trade['t3'] and not trade['t3_hit']:
+                                trade['t3_hit'] = True
+                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "BUY", "entry": trade['entry'], "exit": ltp, "reason": "Target 3 Hit", "pnl": ltp - trade['entry']})
+                                state['trade'] = None
+                                save_state(state)
+                                send_telegram(f"TARGET 3 REACHED - FULL EXIT (BUY)\nExit Price: {ltp}\nPnL: +{round(ltp - trade['entry'], 2)} pts")
+
+                            # Stop Loss Hit (Only if T1 is not hit)
+                            elif trade.get('sl') and ltp <= trade['sl']:
+                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "BUY", "entry": trade['entry'], "exit": ltp, "reason": "Stop Loss Hit", "pnl": ltp - trade['entry']})
+                                state['trade'] = None
+                                save_state(state)
+                                send_telegram(f"STOP LOSS HIT (BUY)\nExit Price: {ltp}\nPnL: {round(ltp - trade['entry'], 2)} pts")
+
+                            # Reverse Signal after T1 Hit
+                            elif trade['t1_hit'] and sell_trigger:
+                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "BUY", "entry": trade['entry'], "exit": ltp, "reason": "Opposite Signal Exit", "pnl": ltp - trade['entry']})
+                                send_telegram(f"EXIT PREVIOUS BUY TRADE\nExit Price: {ltp} (Opposite Sell signal generated)")
+                                trade = None
+                                state['trade'] = None
+                                save_state(state)
+
+                        # SELL TRADE CHECKS
+                        elif trade and trade['type'] == "SELL":
+                            # Target 1 Hit
+                            if ltp <= trade['t1'] and not trade['t1_hit']:
+                                trade['t1_hit'] = True
+                                trade['sl'] = None
+                                save_state(state)
+                                send_telegram(f"TARGET 1 REACHED (SELL)\nPrice: {ltp}\nNote: Stop Loss removed. Hold for T2 and T3.")
+
+                            # Target 2 Hit
+                            if ltp <= trade['t2'] and not trade['t2_hit']:
+                                trade['t2_hit'] = True
+                                save_state(state)
+                                send_telegram(f"TARGET 2 REACHED (SELL)\nPrice: {ltp}\nHold for T3.")
+
+                            # Target 3 Hit (Full Exit)
+                            if ltp <= trade['t3'] and not trade['t3_hit']:
+                                trade['t3_hit'] = True
+                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "SELL", "entry": trade['entry'], "exit": ltp, "reason": "Target 3 Hit", "pnl": trade['entry'] - ltp})
+                                state['trade'] = None
+                                save_state(state)
+                                send_telegram(f"TARGET 3 REACHED - FULL EXIT (SELL)\nExit Price: {ltp}\nPnL: +{round(trade['entry'] - ltp, 2)} pts")
+
+                            # Stop Loss Hit (Only if T1 is not hit)
+                            elif trade.get('sl') and ltp >= trade['sl']:
+                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "SELL", "entry": trade['entry'], "exit": ltp, "reason": "Stop Loss Hit", "pnl": trade['entry'] - ltp})
+                                state['trade'] = None
+                                save_state(state)
+                                send_telegram(f"STOP LOSS HIT (SELL)\nExit Price: {ltp}\nPnL: {round(trade['entry'] - ltp, 2)} pts")
+
+                            # Reverse Signal after T1 Hit
+                            elif trade['t1_hit'] and buy_trigger:
+                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "SELL", "entry": trade['entry'], "exit": ltp, "reason": "Opposite Signal Exit", "pnl": trade['entry'] - ltp})
+                                send_telegram(f"EXIT PREVIOUS SELL TRADE\nExit Price: {ltp} (Opposite Buy signal generated)")
+                                trade = None
+                                state['trade'] = None
+                                save_state(state)
+
+                    # ----- NEW TRADE ENTRY (Triggered only when no trade is active) -----
+                    if state.get("trade") is None:
+                        if buy_trigger:
+                            t1 = round(ltp + (1.0 * atr), 2)
+                            t2 = round(ltp + (1.8 * atr), 2)
+                            t3 = round(ltp + (2.6 * atr), 2)
+                            sl = round(ltp - (1.0 * atr), 2)
+                            state['trade'] = {
+                                "type": "BUY", "entry": ltp, "t1": t1, "t2": t2, "t3": t3,
+                                "sl": sl, "t1_hit": False, "t2_hit": False, "t3_hit": False
+                            }
+                            save_state(state)
+                            msg = f"NEW SIGNAL: BUY NIFTY\n\nEntry Price: {ltp}\nTarget 1 (T1): {t1}\nTarget 2 (T2): {t2}\nTarget 3 (T3): {t3}\nStop Loss (SL): {sl}"
+                            send_telegram(msg)
+
+                        elif sell_trigger:
+                            t1 = round(ltp - (1.0 * atr), 2)
+                            t2 = round(ltp - (1.8 * atr), 2)
+                            t3 = round(ltp - (2.6 * atr), 2)
+                            sl = round(ltp + (1.0 * atr), 2)
+                            state['trade'] = {
+                                "type": "SELL", "entry": ltp, "t1": t1, "t2": t2, "t3": t3,
+                                "sl": sl, "t1_hit": False, "t2_hit": False, "t3_hit": False
+                            }
+                            save_state(state)
+                            msg = f"NEW SIGNAL: SELL NIFTY\n\nEntry Price: {ltp}\nTarget 1 (T1): {t1}\nTarget 2 (T2): {t2}\nTarget 3 (T3): {t3}\nStop Loss (SL): {sl}"
+                            send_telegram(msg)
+
+            except Exception as e:
+                print(f"Loop runtime error: {e}")
+
+        # 4. 03:40 PM - Daily & Monthly PDF Reports
+        if current_time_str == "15:40":
+            if state.get("trade"):
+                trade = state['trade']
+                pnl = (ltp - trade['entry']) if trade['type'] == "BUY" else (trade['entry'] - ltp)
+                log_trade({
+                    "date": now.strftime("%Y-%m-%d"),
+                    "time": current_time_str,
+                    "type": trade['type'],
+                    "entry": trade['entry'],
+                    "exit": ltp,
+                    "reason": "Market Close Exit",
+                    "pnl": pnl
+                })
+                state['trade'] = None
+                save_state(state)
+
+            daily_pdf = generate_pdf("Daily")
+            send_telegram_file(daily_pdf, "Daily Trading Performance Report")
+            send_email_with_pdf(daily_pdf, "Daily P&L Report")
+
+            if is_monthly_expiry_today():
+                monthly_pdf = generate_pdf("Monthly")
+                send_telegram_file(monthly_pdf, "Monthly Expiry Detailed P&L Report")
+                send_email_with_pdf(monthly_pdf, "Monthly Expiry Detailed Report")
+
+            state["sr_sent"] = False
+            state["heartbeat_sent"] = False
+            save_state(state)
+            time.sleep(120)
+
+        time.sleep(20)
 
 if __name__ == "__main__":
-    run_bot_tasks()
+    run_trading_bot()
