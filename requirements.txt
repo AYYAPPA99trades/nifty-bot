@@ -1,3 +1,5 @@
-pandas
 yfinance
+pandas
+ta
 requests
+reportlab
