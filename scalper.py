@@ -8,6 +8,7 @@ from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email import encoders
 
+import pytz
 import yfinance as yf
 import pandas as pd
 import ta
@@ -33,6 +34,8 @@ TELEGRAM_CHAT_IDS = [
     "8996427731",  # Admin Chat ID
     "6789591588"   # Secondary Chat ID
 ]
+
+IST = pytz.timezone('Asia/Kolkata')
 
 # ----------------- TELEGRAM & EMAIL FUNCTIONS -----------------
 def send_telegram(message, admin_only=False):
@@ -100,7 +103,7 @@ def load_state():
                 return json.load(f)
         except Exception:
             pass
-    return {"trade": None, "sr_sent": False, "heartbeat_sent": False}
+    return {"trade": None, "sr_sent": False, "heartbeat_sent": False, "last_signal_bar": ""}
 
 def save_state(state):
     with open(STATE_FILE, "w") as f:
@@ -134,7 +137,7 @@ def get_daily_levels():
 
 # ----------------- PDF GENERATOR (ENTRY TO EXIT CALCULATION) -----------------
 def generate_pdf(report_type="Daily"):
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = datetime.now(IST).strftime("%Y-%m-%d")
     pdf_filename = f"{report_type}_Report_{today_str}.pdf"
     
     trades = []
@@ -144,7 +147,7 @@ def generate_pdf(report_type="Daily"):
             if report_type == "Daily":
                 trades = [t for t in all_trades if t.get('date') == today_str]
             else:
-                curr_month = datetime.now().strftime("%Y-%m")
+                curr_month = datetime.now(IST).strftime("%Y-%m")
                 trades = [t for t in all_trades if str(t.get('date', '')).startswith(curr_month)]
 
     doc = SimpleDocTemplate(pdf_filename, pagesize=letter)
@@ -197,7 +200,7 @@ def generate_pdf(report_type="Daily"):
     return pdf_filename
 
 def is_monthly_expiry_today():
-    today = date.today()
+    today = datetime.now(IST).date()
     if today.weekday() != 3:
         return False
     next_thurs = today + timedelta(days=7)
@@ -206,12 +209,13 @@ def is_monthly_expiry_today():
 # ----------------- MAIN ENGINE -----------------
 def run_trading_bot():
     state = load_state()
-    print("SAS LEVEL TRACKER System Running...")
+    print("SAS LEVEL TRACKER System Running with IST Sync...")
 
     while True:
-        now = datetime.now()
+        now = datetime.now(IST)
         current_time_str = now.strftime("%H:%M")
 
+        # Weekend Check
         if now.weekday() >= 5:
             time.sleep(60)
             continue
@@ -245,23 +249,37 @@ def run_trading_bot():
                     if isinstance(df.columns, pd.MultiIndex):
                         df.columns = df.columns.get_level_values(0)
 
+                    # Indicators
                     df['ema_fast'] = ta.trend.ema_indicator(df['Close'], window=9)
                     df['ema_slow'] = ta.trend.ema_indicator(df['Close'], window=21)
+                    df['ema_trend'] = ta.trend.ema_indicator(df['Close'], window=50)
                     df['rsi'] = ta.momentum.rsi(df['Close'], window=14)
                     df['atr'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
-                    df['vwap'] = ((df['High'] + df['Low'] + df['Close']) / 3 * df['Volume']).cumsum() / df['Volume'].cumsum()
 
                     curr = df.iloc[-1]
                     prev = df.iloc[-2]
                     ltp = round(curr['Close'], 2)
-                    atr = round(curr['atr'], 2)
-                    vwap = round(curr['vwap'], 2)
+                    atr = round(curr['atr'], 2) if not pd.isna(curr['atr']) else 15.0
                     rsi = round(curr['rsi'], 2)
+                    trend_ema = round(curr['ema_trend'], 2)
+                    current_bar_time = str(df.index[-1])
 
                     trade = state.get("trade")
 
-                    buy_trigger = (prev['ema_fast'] <= prev['ema_slow'] and curr['ema_fast'] > curr['ema_slow'] and rsi > 50 and ltp > vwap)
-                    sell_trigger = (prev['ema_fast'] >= prev['ema_slow'] and curr['ema_fast'] < curr['ema_slow'] and rsi < 50 and ltp < vwap)
+                    # Robust Signal Logic (Reliable in Spot Index)
+                    buy_trigger = (
+                        (prev['ema_fast'] <= prev['ema_slow'] and curr['ema_fast'] > curr['ema_slow'])
+                        and rsi > 50
+                        and ltp >= trend_ema
+                        and state.get("last_signal_bar") != current_bar_time
+                    )
+
+                    sell_trigger = (
+                        (prev['ema_fast'] >= prev['ema_slow'] and curr['ema_fast'] < curr['ema_slow'])
+                        and rsi < 50
+                        and ltp <= trend_ema
+                        and state.get("last_signal_bar") != current_bar_time
+                    )
 
                     # ----- ACTIVE TRADE TRACKING -----
                     if trade:
@@ -358,6 +376,7 @@ def run_trading_bot():
                                 "type": "BUY", "entry": ltp, "t1": t1, "t2": t2, "t3": t3,
                                 "sl": sl, "t1_hit": False, "t2_hit": False, "t3_hit": False
                             }
+                            state['last_signal_bar'] = current_bar_time
                             save_state(state)
                             msg = f"NEW SIGNAL: BUY NIFTY\n\nEntry Price: {ltp}\nTarget 1 (T1): {t1}\nTarget 2 (T2): {t2}\nTarget 3 (T3): {t3}\nStop Loss (SL): {sl}"
                             send_telegram(msg)
@@ -371,6 +390,7 @@ def run_trading_bot():
                                 "type": "SELL", "entry": ltp, "t1": t1, "t2": t2, "t3": t3,
                                 "sl": sl, "t1_hit": False, "t2_hit": False, "t3_hit": False
                             }
+                            state['last_signal_bar'] = current_bar_time
                             save_state(state)
                             msg = f"NEW SIGNAL: SELL NIFTY\n\nEntry Price: {ltp}\nTarget 1 (T1): {t1}\nTarget 2 (T2): {t2}\nTarget 3 (T3): {t3}\nStop Loss (SL): {sl}"
                             send_telegram(msg)
@@ -391,7 +411,6 @@ def run_trading_bot():
             trade = state['trade']
             pnl = round((ltp - trade['entry']) if trade['type'] == "BUY" else (trade['entry'] - ltp), 2)
 
-            # ഏത് ടാർഗറ്റ് വരെ എത്തി എന്ന് മനസ്സിലാക്കുന്നു
             if trade['t2_hit']:
                 status_desc = "Target 1 & 2 Achieved (Pending T3 Closed)"
             elif trade['t1_hit']:
@@ -399,7 +418,6 @@ def run_trading_bot():
             else:
                 status_desc = "No Target Hit (Auto Square-off)"
 
-            # ലോഗ് ചെയ്യുന്നു
             log_trade({
                 "date": now.strftime("%Y-%m-%d"),
                 "time": current_time_str,
@@ -410,7 +428,6 @@ def run_trading_bot():
                 "pnl": pnl
             })
 
-            # അലർട്ട് അയക്കുന്നു
             sq_msg = (
                 f"⏰ INTRADAY AUTO-SQUARE OFF (3:20 PM)\n"
                 f"Position: {trade['type']} NIFTY\n"
