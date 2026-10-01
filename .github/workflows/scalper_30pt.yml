@@ -1,1 +1,38 @@
 
+name: SAS 30-Point Scalping Engine
+
+on:
+  schedule:
+    # Monday to Friday IST 09:10 AM (UTC 03:40 AM)
+    - cron: '40 3 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  run-30pt-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore 30-PT State
+        uses: actions/cache@v4
+        with:
+          path: |
+            state_30pt.json
+            history_30pt.json
+          key: state-30pt-${{ github.run_id }}
+          restore-keys: |
+            state-30pt-
+
+      - name: Run 30-Point System
+        run: python scalper_30pt.py
