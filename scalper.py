@@ -25,14 +25,16 @@ DATA_LOG_FILE = "trade_history.json"
 ADMIN_EMAIL_ADDRESS = "Shinos99@gmail.com"
 ADMIN_EMAIL_PASSWORD = "Qm1mu8xU"
 
-# Fixed Telegram Configuration
+# Pazhaya Telegram Bot Token
 TELEGRAM_TOKENS = [
     "8941192045:AAELQ21ZiFKnHMMysyOoMue-hzMgS9ZjotQ"
 ]
 
+# Admin, Joiner & SAS LEVEL TRACKER  Group Chat ID
 TELEGRAM_CHAT_IDS = [
-    "8996427731",  # Admin Chat ID
-    "6789591588"   # Secondary Chat ID
+    "8996427731",       # Admin Chat ID
+    "6789591588",       # Joiner Chat ID
+    "-5481180834"       # SAS LEVEL TRACKER Group ID
 ]
 
 IST = pytz.timezone('Asia/Kolkata')
@@ -201,15 +203,20 @@ def generate_pdf(report_type="Daily"):
 
 def is_monthly_expiry_today():
     today = datetime.now(IST).date()
-    if today.weekday() != 3:
-        return False
-    next_thurs = today + timedelta(days=7)
-    return next_thurs.month != today.month
+    days_left = 31 - today.day
+    if days_left <= 7:
+        for d in range(1, days_left + 1):
+            future_day = today + timedelta(days=d)
+            if future_day.month == today.month and future_day.weekday() == 3:
+                return False
+        if today.weekday() in [1, 2, 3]:
+            return True
+    return False
 
-# ----------------- MAIN ENGINE -----------------
+# ----------------- MAIN ENGINE (8:58 AM - 3:40 PM) -----------------
 def run_trading_bot():
     state = load_state()
-    print("SAS LEVEL TRACKER System Running with IST Sync...")
+    print("SAS LEVEL TRACKER System Running (08:58 AM - 03:40 PM IST)...")
 
     while True:
         now = datetime.now(IST)
@@ -220,14 +227,14 @@ def run_trading_bot():
             time.sleep(60)
             continue
 
-        # 1. 09:00 AM - Auto Run Admin Alert
-        if current_time_str == "09:00" and not state.get("heartbeat_sent"):
-            send_telegram("Bot Auto Run Initialized\nData link active. Waiting for market open.", admin_only=True)
+        # 1. 08:58 AM to 09:02 AM - Auto Run Admin Alert
+        if "08:58" <= current_time_str <= "09:02" and not state.get("heartbeat_sent"):
+            send_telegram("Bot Auto Run Initialized\nData backup loaded. Zero delay link active.", admin_only=True)
             state["heartbeat_sent"] = True
             save_state(state)
 
         # 2. 09:05 AM - Nifty Resistance & Support
-        if current_time_str == "09:05" and not state.get("sr_sent"):
+        if current_time_str >= "09:05" and not state.get("sr_sent"):
             p, r1, r2, s1, s2 = get_daily_levels()
             msg = (
                 f"NIFTY 50 DAILY LEVELS\n\n"
@@ -249,7 +256,6 @@ def run_trading_bot():
                     if isinstance(df.columns, pd.MultiIndex):
                         df.columns = df.columns.get_level_values(0)
 
-                    # Indicators
                     df['ema_fast'] = ta.trend.ema_indicator(df['Close'], window=9)
                     df['ema_slow'] = ta.trend.ema_indicator(df['Close'], window=21)
                     df['ema_trend'] = ta.trend.ema_indicator(df['Close'], window=50)
@@ -266,7 +272,6 @@ def run_trading_bot():
 
                     trade = state.get("trade")
 
-                    # Robust Signal Logic (Reliable in Spot Index)
                     buy_trigger = (
                         (prev['ema_fast'] <= prev['ema_slow'] and curr['ema_fast'] > curr['ema_slow'])
                         and rsi > 50
@@ -285,20 +290,17 @@ def run_trading_bot():
                     if trade:
                         # BUY TRADE CHECKS
                         if trade['type'] == "BUY":
-                            # Target 1 Hit
                             if ltp >= trade['t1'] and not trade['t1_hit']:
                                 trade['t1_hit'] = True
                                 trade['sl'] = None  # Remove SL after T1
                                 save_state(state)
                                 send_telegram(f"TARGET 1 REACHED (BUY)\nPrice: {ltp}\nNote: Stop Loss removed. Hold for T2 and T3.")
 
-                            # Target 2 Hit
                             if ltp >= trade['t2'] and not trade['t2_hit']:
                                 trade['t2_hit'] = True
                                 save_state(state)
                                 send_telegram(f"TARGET 2 REACHED (BUY)\nPrice: {ltp}\nHold for T3.")
 
-                            # Target 3 Hit (Full Exit)
                             if ltp >= trade['t3'] and not trade['t3_hit']:
                                 trade['t3_hit'] = True
                                 pnl = round(ltp - trade['entry'], 2)
@@ -307,7 +309,6 @@ def run_trading_bot():
                                 save_state(state)
                                 send_telegram(f"TARGET 3 REACHED - FULL EXIT (BUY)\nExit Price: {ltp}\nPnL: +{pnl} pts")
 
-                            # Stop Loss Hit (Only if T1 is not hit)
                             elif trade.get('sl') and ltp <= trade['sl']:
                                 pnl = round(ltp - trade['entry'], 2)
                                 log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "BUY", "entry": trade['entry'], "exit": ltp, "reason": "Stop Loss Hit", "pnl": pnl})
@@ -315,7 +316,6 @@ def run_trading_bot():
                                 save_state(state)
                                 send_telegram(f"STOP LOSS HIT (BUY)\nExit Price: {ltp}\nPnL: {pnl} pts")
 
-                            # Reverse Signal after T1 Hit
                             elif trade['t1_hit'] and sell_trigger:
                                 pnl = round(ltp - trade['entry'], 2)
                                 log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "BUY", "entry": trade['entry'], "exit": ltp, "reason": "Opposite Signal Exit", "pnl": pnl})
@@ -326,20 +326,17 @@ def run_trading_bot():
 
                         # SELL TRADE CHECKS
                         elif trade and trade['type'] == "SELL":
-                            # Target 1 Hit
                             if ltp <= trade['t1'] and not trade['t1_hit']:
                                 trade['t1_hit'] = True
                                 trade['sl'] = None
                                 save_state(state)
                                 send_telegram(f"TARGET 1 REACHED (SELL)\nPrice: {ltp}\nNote: Stop Loss removed. Hold for T2 and T3.")
 
-                            # Target 2 Hit
                             if ltp <= trade['t2'] and not trade['t2_hit']:
                                 trade['t2_hit'] = True
                                 save_state(state)
                                 send_telegram(f"TARGET 2 REACHED (SELL)\nPrice: {ltp}\nHold for T3.")
 
-                            # Target 3 Hit (Full Exit)
                             if ltp <= trade['t3'] and not trade['t3_hit']:
                                 trade['t3_hit'] = True
                                 pnl = round(trade['entry'] - ltp, 2)
@@ -348,7 +345,6 @@ def run_trading_bot():
                                 save_state(state)
                                 send_telegram(f"TARGET 3 REACHED - FULL EXIT (SELL)\nExit Price: {ltp}\nPnL: +{pnl} pts")
 
-                            # Stop Loss Hit (Only if T1 is not hit)
                             elif trade.get('sl') and ltp >= trade['sl']:
                                 pnl = round(trade['entry'] - ltp, 2)
                                 log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "SELL", "entry": trade['entry'], "exit": ltp, "reason": "Stop Loss Hit", "pnl": pnl})
@@ -356,7 +352,6 @@ def run_trading_bot():
                                 save_state(state)
                                 send_telegram(f"STOP LOSS HIT (SELL)\nExit Price: {ltp}\nPnL: {pnl} pts")
 
-                            # Reverse Signal after T1 Hit
                             elif trade['t1_hit'] and buy_trigger:
                                 pnl = round(trade['entry'] - ltp, 2)
                                 log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "SELL", "entry": trade['entry'], "exit": ltp, "reason": "Opposite Signal Exit", "pnl": pnl})
@@ -399,7 +394,7 @@ def run_trading_bot():
                 print(f"Loop runtime error: {e}")
 
         # 4. 03:20 PM - EXIT ALL OPEN POSITIONS (Auto Square-off)
-        if current_time_str == "15:20" and state.get("trade"):
+        if current_time_str >= "15:20" and state.get("trade"):
             try:
                 df = yf.download('^NSEI', period='1d', interval='1m', progress=False)
                 if isinstance(df.columns, pd.MultiIndex):
@@ -429,7 +424,7 @@ def run_trading_bot():
             })
 
             sq_msg = (
-                f"⏰ INTRADAY AUTO-SQUARE OFF (3:20 PM)\n"
+                f"INTRADAY AUTO-SQUARE OFF (3:20 PM)\n"
                 f"Position: {trade['type']} NIFTY\n"
                 f"Status: {status_desc}\n"
                 f"Entry Price: {trade['entry']}\n"
@@ -441,8 +436,8 @@ def run_trading_bot():
             state['trade'] = None
             save_state(state)
 
-        # 5. 03:40 PM - Daily & Monthly PDF Reports
-        if current_time_str == "15:40":
+        # 5. 03:40 PM - Daily & Monthly PDF Reports and Safe Exit
+        if current_time_str >= "15:40":
             daily_pdf = generate_pdf("Daily")
             send_telegram_file(daily_pdf, "Daily Trading Performance Report")
             send_email_with_pdf(daily_pdf, "Daily P&L Report")
@@ -455,9 +450,10 @@ def run_trading_bot():
             state["sr_sent"] = False
             state["heartbeat_sent"] = False
             save_state(state)
-            time.sleep(120)
+            print("Today's market operations completed successfully.")
+            break
 
-        time.sleep(20)
+        time.sleep(15)
 
 if __name__ == "__main__":
     run_trading_bot()
