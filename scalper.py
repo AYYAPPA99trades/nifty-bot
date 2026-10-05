@@ -21,25 +21,26 @@ from reportlab.lib import colors
 STATE_FILE = "trade_state.json"
 DATA_LOG_FILE = "trade_history.json"
 
-# Fixed Admin Email Credentials
 ADMIN_EMAIL_ADDRESS = "Shinos99@gmail.com"
 ADMIN_EMAIL_PASSWORD = "Qm1mu8xU"
 
-# Pazhaya Telegram Bot Token
+# പുതിയ ടെലിഗ്രാം ബോട്ട് (@sasvipalerts_bot)
 TELEGRAM_TOKENS = [
-    "8941192045:AAELQ21ZiFKnHMMysyOoMue-hzMgS9ZjotQ"
+    "8830008372:AAEUpi-Pw0BA2aInmc6BonloWLUZ0nuB8i8"
 ]
 
-# Admin, Joiner & SAS LEVEL TRACKER  Group Chat ID
+# Admin, Secondary & പുതിയ SAS VIP ALERTS ഗ്രൂപ്പ് Chat ID
 TELEGRAM_CHAT_IDS = [
-    "8996427731",       # Admin Chat ID
-    "6789591588",       # Joiner Chat ID
-    "-5481180834"       # SAS LEVEL TRACKER Group ID
+    "8996427731",          # Admin Chat ID
+    "6789591588",          # Secondary Joiner Chat ID
+    "-1004399032148"       # New SAS VIP ALERTS Group ID
 ]
 
 IST = pytz.timezone('Asia/Kolkata')
+TARGET_PTS = 30.0
+SL_PTS = 30.0
 
-# ----------------- TELEGRAM & EMAIL FUNCTIONS -----------------
+# ----------------- TELEGRAM & EMAIL DISPATCH -----------------
 def send_telegram(message, admin_only=False):
     target_chats = [TELEGRAM_CHAT_IDS[0]] if admin_only else TELEGRAM_CHAT_IDS
     formatted_msg = f"SAS LEVEL TRACKER\n\n{message}"
@@ -78,7 +79,7 @@ def send_email_with_pdf(file_path, subject):
     msg['From'] = ADMIN_EMAIL_ADDRESS
     msg['To'] = ADMIN_EMAIL_ADDRESS
     msg['Subject'] = f"SAS LEVEL TRACKER - {subject}"
-    msg.attach(MIMEText("Please find the attached PDF trade report.", 'plain'))
+    msg.attach(MIMEText("Please find attached the trading performance report.", 'plain'))
 
     try:
         with open(file_path, 'rb') as attachment:
@@ -93,11 +94,10 @@ def send_email_with_pdf(file_path, subject):
         server.login(ADMIN_EMAIL_ADDRESS, ADMIN_EMAIL_PASSWORD)
         server.sendmail(ADMIN_EMAIL_ADDRESS, ADMIN_EMAIL_ADDRESS, msg.as_string())
         server.quit()
-        print("Email sent successfully.")
     except Exception as e:
         print(f"Email Dispatch Error: {e}")
 
-# ----------------- STATE BACKUP & RECOVERY -----------------
+# ----------------- BACKUP & RESTORE ENGINE -----------------
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
@@ -105,7 +105,7 @@ def load_state():
                 return json.load(f)
         except Exception:
             pass
-    return {"trade": None, "sr_sent": False, "heartbeat_sent": False, "last_signal_bar": ""}
+    return {"trade": None, "sr_sent": False, "heartbeat_sent": False, "last_signal_time": ""}
 
 def save_state(state):
     with open(STATE_FILE, "w") as f:
@@ -137,7 +137,7 @@ def get_daily_levels():
     s2 = pivot - (h - l)
     return round(pivot, 2), round(r1, 2), round(r2, 2), round(s1, 2), round(s2, 2)
 
-# ----------------- PDF GENERATOR (ENTRY TO EXIT CALCULATION) -----------------
+# ----------------- PDF ENGINE (ENTRY TO EXIT STRICT CALCULATION) -----------------
 def generate_pdf(report_type="Daily"):
     today_str = datetime.now(IST).strftime("%Y-%m-%d")
     pdf_filename = f"{report_type}_Report_{today_str}.pdf"
@@ -166,14 +166,7 @@ def generate_pdf(report_type="Daily"):
     for t in trades:
         entry = float(t.get('entry', 0.0))
         exit_p = float(t.get('exit', 0.0))
-        
-        # Strict Entry to Exit Calculation
-        if t.get('type') == 'BUY':
-            pnl = exit_p - entry
-        else:
-            pnl = entry - exit_p
-            
-        pnl = round(pnl, 2)
+        pnl = round(exit_p - entry if t.get('type') == 'BUY' else entry - exit_p, 2)
         total_pts += pnl
 
         table_data.append([
@@ -201,6 +194,7 @@ def generate_pdf(report_type="Daily"):
     doc.build(elements)
     return pdf_filename
 
+# ----------------- MONTHLY EXPIRY CHECK (HOLIDAY AWARE) -----------------
 def is_monthly_expiry_today():
     today = datetime.now(IST).date()
     days_left = 31 - today.day
@@ -222,7 +216,7 @@ def run_trading_bot():
         now = datetime.now(IST)
         current_time_str = now.strftime("%H:%M")
 
-        # Weekend Check
+        # വാരാന്ത്യങ്ങളിൽ ഒഴിവാക്കുന്നു
         if now.weekday() >= 5:
             time.sleep(60)
             continue
@@ -233,7 +227,7 @@ def run_trading_bot():
             state["heartbeat_sent"] = True
             save_state(state)
 
-        # 2. 09:05 AM - Nifty Resistance & Support
+        # 2. 09:05 AM - Nifty Daily Support & Resistance Levels
         if current_time_str >= "09:05" and not state.get("sr_sent"):
             p, r1, r2, s1, s2 = get_daily_levels()
             msg = (
@@ -248,152 +242,97 @@ def run_trading_bot():
             state["sr_sent"] = True
             save_state(state)
 
-        # 3. 09:15 AM to 03:19 PM - Live Signals & Trade Monitoring
+        # 3. 09:15 AM to 03:19 PM - Target 30 / SL 30 Scalping Engine
         if "09:15" <= current_time_str < "15:20":
             try:
-                df = yf.download('^NSEI', period='1d', interval='1m', progress=False)
+                # 2-Minute Timeframe for accurate intraday scalp entries
+                df = yf.download('^NSEI', period='1d', interval='2m', progress=False)
                 if not df.empty and len(df) >= 25:
                     if isinstance(df.columns, pd.MultiIndex):
                         df.columns = df.columns.get_level_values(0)
 
-                    df['ema_fast'] = ta.trend.ema_indicator(df['Close'], window=9)
-                    df['ema_slow'] = ta.trend.ema_indicator(df['Close'], window=21)
-                    df['ema_trend'] = ta.trend.ema_indicator(df['Close'], window=50)
+                    df['ema_9'] = ta.trend.ema_indicator(df['Close'], window=9)
+                    df['ema_21'] = ta.trend.ema_indicator(df['Close'], window=21)
                     df['rsi'] = ta.momentum.rsi(df['Close'], window=14)
-                    df['atr'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
 
                     curr = df.iloc[-1]
                     prev = df.iloc[-2]
                     ltp = round(curr['Close'], 2)
-                    atr = round(curr['atr'], 2) if not pd.isna(curr['atr']) else 15.0
                     rsi = round(curr['rsi'], 2)
-                    trend_ema = round(curr['ema_trend'], 2)
-                    current_bar_time = str(df.index[-1])
+                    bar_time = str(df.index[-1])
 
                     trade = state.get("trade")
 
                     buy_trigger = (
-                        (prev['ema_fast'] <= prev['ema_slow'] and curr['ema_fast'] > curr['ema_slow'])
-                        and rsi > 50
-                        and ltp >= trend_ema
-                        and state.get("last_signal_bar") != current_bar_time
+                        prev['ema_9'] <= prev['ema_21'] and curr['ema_9'] > curr['ema_21']
+                        and rsi > 55
+                        and state.get("last_signal_time") != bar_time
                     )
 
                     sell_trigger = (
-                        (prev['ema_fast'] >= prev['ema_slow'] and curr['ema_fast'] < curr['ema_slow'])
-                        and rsi < 50
-                        and ltp <= trend_ema
-                        and state.get("last_signal_bar") != current_bar_time
+                        prev['ema_9'] >= prev['ema_21'] and curr['ema_9'] < curr['ema_21']
+                        and rsi < 45
+                        and state.get("last_signal_time") != bar_time
                     )
 
-                    # ----- ACTIVE TRADE TRACKING -----
+                    # ----- ACTIVE TRADE MONITORING (Strict 30 Pts Target & 30 Pts SL) -----
                     if trade:
-                        # BUY TRADE CHECKS
                         if trade['type'] == "BUY":
-                            if ltp >= trade['t1'] and not trade['t1_hit']:
-                                trade['t1_hit'] = True
-                                trade['sl'] = None  # Remove SL after T1
-                                save_state(state)
-                                send_telegram(f"TARGET 1 REACHED (BUY)\nPrice: {ltp}\nNote: Stop Loss removed. Hold for T2 and T3.")
-
-                            if ltp >= trade['t2'] and not trade['t2_hit']:
-                                trade['t2_hit'] = True
-                                save_state(state)
-                                send_telegram(f"TARGET 2 REACHED (BUY)\nPrice: {ltp}\nHold for T3.")
-
-                            if ltp >= trade['t3'] and not trade['t3_hit']:
-                                trade['t3_hit'] = True
+                            # Target 30 Hit
+                            if ltp >= trade['target']:
                                 pnl = round(ltp - trade['entry'], 2)
-                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "BUY", "entry": trade['entry'], "exit": ltp, "reason": "Target 3 Hit", "pnl": pnl})
+                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "BUY", "entry": trade['entry'], "exit": ltp, "reason": "Target 30 Hit", "pnl": pnl})
                                 state['trade'] = None
                                 save_state(state)
-                                send_telegram(f"TARGET 3 REACHED - FULL EXIT (BUY)\nExit Price: {ltp}\nPnL: +{pnl} pts")
+                                send_telegram(f"TARGET HIT (+30 PTS) (BUY)\nExit Price: {ltp}\nPnL: +{pnl} pts")
 
-                            elif trade.get('sl') and ltp <= trade['sl']:
+                            # Stop Loss 30 Hit
+                            elif ltp <= trade['sl']:
                                 pnl = round(ltp - trade['entry'], 2)
-                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "BUY", "entry": trade['entry'], "exit": ltp, "reason": "Stop Loss Hit", "pnl": pnl})
+                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "BUY", "entry": trade['entry'], "exit": ltp, "reason": "Stop Loss 30 Hit", "pnl": pnl})
                                 state['trade'] = None
                                 save_state(state)
-                                send_telegram(f"STOP LOSS HIT (BUY)\nExit Price: {ltp}\nPnL: {pnl} pts")
+                                send_telegram(f"STOP LOSS HIT (-30 PTS) (BUY)\nExit Price: {ltp}\nPnL: {pnl} pts")
 
-                            elif trade['t1_hit'] and sell_trigger:
-                                pnl = round(ltp - trade['entry'], 2)
-                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "BUY", "entry": trade['entry'], "exit": ltp, "reason": "Opposite Signal Exit", "pnl": pnl})
-                                send_telegram(f"EXIT PREVIOUS BUY TRADE\nExit Price: {ltp} (Opposite Sell signal generated)")
-                                trade = None
-                                state['trade'] = None
-                                save_state(state)
-
-                        # SELL TRADE CHECKS
-                        elif trade and trade['type'] == "SELL":
-                            if ltp <= trade['t1'] and not trade['t1_hit']:
-                                trade['t1_hit'] = True
-                                trade['sl'] = None
-                                save_state(state)
-                                send_telegram(f"TARGET 1 REACHED (SELL)\nPrice: {ltp}\nNote: Stop Loss removed. Hold for T2 and T3.")
-
-                            if ltp <= trade['t2'] and not trade['t2_hit']:
-                                trade['t2_hit'] = True
-                                save_state(state)
-                                send_telegram(f"TARGET 2 REACHED (SELL)\nPrice: {ltp}\nHold for T3.")
-
-                            if ltp <= trade['t3'] and not trade['t3_hit']:
-                                trade['t3_hit'] = True
+                        elif trade['type'] == "SELL":
+                            # Target 30 Hit
+                            if ltp <= trade['target']:
                                 pnl = round(trade['entry'] - ltp, 2)
-                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "SELL", "entry": trade['entry'], "exit": ltp, "reason": "Target 3 Hit", "pnl": pnl})
+                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "SELL", "entry": trade['entry'], "exit": ltp, "reason": "Target 30 Hit", "pnl": pnl})
                                 state['trade'] = None
                                 save_state(state)
-                                send_telegram(f"TARGET 3 REACHED - FULL EXIT (SELL)\nExit Price: {ltp}\nPnL: +{pnl} pts")
+                                send_telegram(f"TARGET HIT (+30 PTS) (SELL)\nExit Price: {ltp}\nPnL: +{pnl} pts")
 
-                            elif trade.get('sl') and ltp >= trade['sl']:
+                            # Stop Loss 30 Hit
+                            elif ltp >= trade['sl']:
                                 pnl = round(trade['entry'] - ltp, 2)
-                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "SELL", "entry": trade['entry'], "exit": ltp, "reason": "Stop Loss Hit", "pnl": pnl})
+                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "SELL", "entry": trade['entry'], "exit": ltp, "reason": "Stop Loss 30 Hit", "pnl": pnl})
                                 state['trade'] = None
                                 save_state(state)
-                                send_telegram(f"STOP LOSS HIT (SELL)\nExit Price: {ltp}\nPnL: {pnl} pts")
+                                send_telegram(f"STOP LOSS HIT (-30 PTS) (SELL)\nExit Price: {ltp}\nPnL: {pnl} pts")
 
-                            elif trade['t1_hit'] and buy_trigger:
-                                pnl = round(trade['entry'] - ltp, 2)
-                                log_trade({"date": now.strftime("%Y-%m-%d"), "time": current_time_str, "type": "SELL", "entry": trade['entry'], "exit": ltp, "reason": "Opposite Signal Exit", "pnl": pnl})
-                                send_telegram(f"EXIT PREVIOUS SELL TRADE\nExit Price: {ltp} (Opposite Buy signal generated)")
-                                trade = None
-                                state['trade'] = None
-                                save_state(state)
-
-                    # ----- NEW TRADE ENTRY (Only before 03:10 PM) -----
+                    # ----- NEW TRADE SIGNAL (നിലവിലെ ട്രേഡ് കഴിഞ്ഞാൽ മാത്രം) -----
                     if state.get("trade") is None and current_time_str <= "15:10":
                         if buy_trigger:
-                            t1 = round(ltp + (1.0 * atr), 2)
-                            t2 = round(ltp + (1.8 * atr), 2)
-                            t3 = round(ltp + (2.6 * atr), 2)
-                            sl = round(ltp - (1.0 * atr), 2)
-                            state['trade'] = {
-                                "type": "BUY", "entry": ltp, "t1": t1, "t2": t2, "t3": t3,
-                                "sl": sl, "t1_hit": False, "t2_hit": False, "t3_hit": False
-                            }
-                            state['last_signal_bar'] = current_bar_time
+                            target = round(ltp + TARGET_PTS, 2)
+                            sl = round(ltp - SL_PTS, 2)
+                            state['trade'] = {"type": "BUY", "entry": ltp, "target": target, "sl": sl}
+                            state['last_signal_time'] = bar_time
                             save_state(state)
-                            msg = f"NEW SIGNAL: BUY NIFTY\n\nEntry Price: {ltp}\nTarget 1 (T1): {t1}\nTarget 2 (T2): {t2}\nTarget 3 (T3): {t3}\nStop Loss (SL): {sl}"
-                            send_telegram(msg)
+                            send_telegram(f"NEW SIGNAL: BUY NIFTY\n\nEntry Price: {ltp}\nTarget (+30): {target}\nStop Loss (-30): {sl}")
 
                         elif sell_trigger:
-                            t1 = round(ltp - (1.0 * atr), 2)
-                            t2 = round(ltp - (1.8 * atr), 2)
-                            t3 = round(ltp - (2.6 * atr), 2)
-                            sl = round(ltp + (1.0 * atr), 2)
-                            state['trade'] = {
-                                "type": "SELL", "entry": ltp, "t1": t1, "t2": t2, "t3": t3,
-                                "sl": sl, "t1_hit": False, "t2_hit": False, "t3_hit": False
-                            }
-                            state['last_signal_bar'] = current_bar_time
+                            target = round(ltp - TARGET_PTS, 2)
+                            sl = round(ltp + SL_PTS, 2)
+                            state['trade'] = {"type": "SELL", "entry": ltp, "target": target, "sl": sl}
+                            state['last_signal_time'] = bar_time
                             save_state(state)
-                            msg = f"NEW SIGNAL: SELL NIFTY\n\nEntry Price: {ltp}\nTarget 1 (T1): {t1}\nTarget 2 (T2): {t2}\nTarget 3 (T3): {t3}\nStop Loss (SL): {sl}"
-                            send_telegram(msg)
+                            send_telegram(f"NEW SIGNAL: SELL NIFTY\n\nEntry Price: {ltp}\nTarget (-30): {target}\nStop Loss (+30): {sl}")
 
             except Exception as e:
                 print(f"Loop runtime error: {e}")
 
-        # 4. 03:20 PM - EXIT ALL OPEN POSITIONS (Auto Square-off)
+        # 4. 03:20 PM - Auto Square-off (Remaining Open Positions)
         if current_time_str >= "15:20" and state.get("trade"):
             try:
                 df = yf.download('^NSEI', period='1d', interval='1m', progress=False)
@@ -406,27 +345,19 @@ def run_trading_bot():
             trade = state['trade']
             pnl = round((ltp - trade['entry']) if trade['type'] == "BUY" else (trade['entry'] - ltp), 2)
 
-            if trade['t2_hit']:
-                status_desc = "Target 1 & 2 Achieved (Pending T3 Closed)"
-            elif trade['t1_hit']:
-                status_desc = "Target 1 Achieved (Pending T2/T3 Closed)"
-            else:
-                status_desc = "No Target Hit (Auto Square-off)"
-
             log_trade({
                 "date": now.strftime("%Y-%m-%d"),
                 "time": current_time_str,
                 "type": trade['type'],
                 "entry": trade['entry'],
                 "exit": ltp,
-                "reason": status_desc,
+                "reason": "Intraday Auto Square-off (3:20 PM)",
                 "pnl": pnl
             })
 
             sq_msg = (
                 f"INTRADAY AUTO-SQUARE OFF (3:20 PM)\n"
                 f"Position: {trade['type']} NIFTY\n"
-                f"Status: {status_desc}\n"
                 f"Entry Price: {trade['entry']}\n"
                 f"Exit Price: {ltp}\n"
                 f"PnL: {pnl:+} pts"
@@ -436,7 +367,7 @@ def run_trading_bot():
             state['trade'] = None
             save_state(state)
 
-        # 5. 03:40 PM - Daily & Monthly PDF Reports and Safe Exit
+        # 5. 03:40 PM - Daily & Monthly PDF Reports & Clean Exit
         if current_time_str >= "15:40":
             daily_pdf = generate_pdf("Daily")
             send_telegram_file(daily_pdf, "Daily Trading Performance Report")
@@ -450,7 +381,7 @@ def run_trading_bot():
             state["sr_sent"] = False
             state["heartbeat_sent"] = False
             save_state(state)
-            print("Today's market operations completed successfully.")
+            print("Today's operations completed successfully.")
             break
 
         time.sleep(15)
