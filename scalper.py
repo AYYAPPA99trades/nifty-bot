@@ -11,6 +11,7 @@ from email import encoders
 import pytz
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import ta
 import requests
 from reportlab.lib.pagesizes import letter
@@ -24,8 +25,9 @@ DATA_LOG_FILE = "trade_history.json"
 ADMIN_EMAIL_ADDRESS = "Shinos99@gmail.com"
 ADMIN_EMAIL_PASSWORD = "Qm1mu8xU"
 
+# Updated with your new token
 TELEGRAM_TOKENS = [
-    "8830008372:AAEUpi-Pw0BA2aInmc6BonloWLUZ0nuB8i8"
+    "8830008372:AAGaq16u0STxZR1Z9q3qO5Lr1MQD288_9pc"
 ]
 
 TELEGRAM_CHAT_IDS = [
@@ -136,6 +138,19 @@ def get_daily_levels():
     s2 = pivot - (h - l)
     return round(pivot, 2), round(r1, 2), round(r2, 2), round(s1, 2), round(s2, 2)
 
+def calculate_heikin_ashi(df):
+    ha_df = pd.DataFrame(index=df.index)
+    ha_df['Close'] = (df['Open'] + df['High'] + df['Low'] + df['Close']) / 4.0
+
+    ha_open = [df['Open'].iloc[0]]
+    for i in range(1, len(df)):
+        ha_open.append((ha_open[i-1] + ha_df['Close'].iloc[i-1]) / 2.0)
+    ha_df['Open'] = ha_open
+
+    ha_df['High'] = pd.concat([df['High'], ha_df['Open'], ha_df['Close']], axis=1).max(axis=1)
+    ha_df['Low'] = pd.concat([df['Low'], ha_df['Open'], ha_df['Close']], axis=1).min(axis=1)
+    return ha_df
+
 def generate_pdf(report_type="Daily"):
     today_str = datetime.now(IST).strftime("%Y-%m-%d")
     pdf_filename = f"{report_type}_Report_{today_str}.pdf"
@@ -213,7 +228,7 @@ def run_trading_bot():
     start_time_str = datetime.now(IST).strftime("%I:%M %p")
     start_msg = f"""🤖 *Bot Started / Reconnected*
 Time: `{start_time_str}`
-2-Min Balanced Engine (50 EMA + ADX > 15) Active."""
+Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
     send_telegram(start_msg, admin_only=True)
     print(f"SAS LEVEL TRACKER System Running at {start_time_str}...")
 
@@ -243,44 +258,40 @@ Time: `{start_time_str}`
         if "09:15" <= current_time_str < "15:20":
             try:
                 df = yf.download('^NSEI', period='5d', interval='2m', progress=False)
-                if not df.empty and len(df) >= 55:
+                if not df.empty and len(df) >= 30:
                     if isinstance(df.columns, pd.MultiIndex):
                         df.columns = df.columns.get_level_values(0)
 
-                    df['ema_9'] = ta.trend.ema_indicator(df['Close'], window=9)
+                    ha_df = calculate_heikin_ashi(df)
                     df['ema_21'] = ta.trend.ema_indicator(df['Close'], window=21)
-                    df['ema_50'] = ta.trend.ema_indicator(df['Close'], window=50)
-                    df['rsi'] = ta.momentum.rsi(df['Close'], window=14)
-                    
-                    adx_indicator = ta.trend.ADXIndicator(df['High'], df['Low'], df['Close'], window=14)
-                    df['adx'] = adx_indicator.adx()
 
-                    curr = df.iloc[-1]
-                    prev = df.iloc[-2]
-                    ltp = round(curr['Close'], 2)
-                    rsi = round(curr['rsi'], 2)
-                    adx_val = round(curr['adx'], 2)
-                    ema_50_val = round(curr['ema_50'], 2)
+                    curr_ha = ha_df.iloc[-1]
+                    prev_ha = ha_df.iloc[-2]
+                    curr_raw = df.iloc[-1]
+
+                    ltp = round(curr_raw['Close'], 2)
+                    ema_21_val = round(curr_raw['ema_21'], 2)
                     bar_time = str(df.index[-1])
 
                     trade = state.get("trade")
                     is_trading_window = "09:20" <= current_time_str <= "14:45"
 
+                    # Heikin Ashi Strong Trend Logic
+                    # BUY: Green candle, No lower shadow, Close > 21 EMA
                     buy_trigger = (
-                        ltp > ema_50_val
-                        and adx_val > 15.0
-                        and prev['ema_9'] <= prev['ema_21']
-                        and curr['ema_9'] > curr['ema_21']
-                        and rsi > 50
+                        curr_ha['Close'] > curr_ha['Open']
+                        and np.isclose(curr_ha['Low'], curr_ha['Open'], atol=1.5)
+                        and ltp > ema_21_val
+                        and prev_ha['Close'] <= prev_ha['Open']
                         and state.get("last_signal_time") != bar_time
                     )
 
+                    # SELL: Red candle, No upper shadow, Close < 21 EMA
                     sell_trigger = (
-                        ltp < ema_50_val
-                        and adx_val > 15.0
-                        and prev['ema_9'] >= prev['ema_21']
-                        and curr['ema_9'] < curr['ema_21']
-                        and rsi < 50
+                        curr_ha['Close'] < curr_ha['Open']
+                        and np.isclose(curr_ha['High'], curr_ha['Open'], atol=1.5)
+                        and ltp < ema_21_val
+                        and prev_ha['Close'] >= prev_ha['Open']
                         and state.get("last_signal_time") != bar_time
                     )
 
@@ -347,7 +358,7 @@ Exit Price: `{ltp}`
 🔹 Entry Price: `{ltp}`
 🎯 Target (+30): `{target}`
 🛑 Stop Loss (-30): `{sl}`
-📊 50 EMA: `{ema_50_val}` | ADX: `{adx_val}`"""
+📊 Pattern: Heikin Ashi Strong Bullish"""
                             send_telegram(b_msg)
 
                         elif sell_trigger:
@@ -363,7 +374,7 @@ Exit Price: `{ltp}`
 🔹 Entry Price: `{ltp}`
 🎯 Target (-30): `{target}`
 🛑 Stop Loss (+30): `{sl}`
-📊 50 EMA: `{ema_50_val}` | ADX: `{adx_val}`"""
+📊 Pattern: Heikin Ashi Strong Bearish"""
                             send_telegram(s_msg)
 
             except Exception as e:
