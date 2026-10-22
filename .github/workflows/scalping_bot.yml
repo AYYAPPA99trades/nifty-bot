@@ -9,6 +9,8 @@ on:
 jobs:
   run-scalper:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -35,3 +37,12 @@ jobs:
 
       - name: Run Trading System
         run: python scalper.py
+
+      - name: Commit & Push Updated Trade Logs
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add trade_state.json trade_history.json || true
+          git commit -m "Auto-update trade logs [skip ci]" || true
+          git push || true
