@@ -4,7 +4,7 @@ on:
   schedule:
     # Monday to Friday: 03:30 UTC = 09:00 AM IST
     - cron: '30 3 * * 1-5'
-  workflow_dispatch: # Need on-demand start button
+  workflow_dispatch: # Manual start button
 
 jobs:
   run-bot:
@@ -27,4 +27,4 @@ jobs:
 
       - name: Run Scalper Bot
         run: |
-          python "scalper (3).py"
+          python scalper.py
