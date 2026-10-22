@@ -237,8 +237,8 @@ Time: `{start_time_str}`
             time.sleep(60)
             continue
 
-        # 09:05 AM - Levels
-        if current_time_str >= "09:05" and not state.get("sr_sent"):
+        # 09:05 AM muthal 09:10 AM vare mathram check cheyyuka
+        if "09:05" <= current_time_str < "09:10" and not state.get("sr_sent"):
             p, r1, r2, s1, s2 = get_daily_levels()
             if p > 0:
                 msg = f"""📈 *NIFTY 50 DAILY LEVELS*
