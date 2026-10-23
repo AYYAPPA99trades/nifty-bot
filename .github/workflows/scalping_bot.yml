@@ -1,16 +1,13 @@
-name: SAS LEVEL TRACKER Continuous Engine
+name: Nifty Trading Bot Runner
 
 on:
-  schedule:
-    # Monday to Friday at UTC 03:25 AM (IST 08:55 AM)
-    - cron: '25 3 * * 1-5'
   workflow_dispatch:
+  schedule:
+    - cron: '15 3 * * 1-5'
 
 jobs:
-  run-scalper:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -23,17 +20,7 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install yfinance pandas ta requests reportlab pytz
 
-      - name: Restore Previous Trade State
-        uses: actions/cache@v4
-        with:
-          path: |
-            trade_state.json
-            trade_history.json
-          key: trade-state-${{ github.run_id }}
-          restore-keys: |
-            trade-state-
-
-      - name: Run Trading System
+      - name: Run Scalper Bot
         run: python scalper.py
