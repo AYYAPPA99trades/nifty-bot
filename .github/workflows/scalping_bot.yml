@@ -1,30 +1,21 @@
-name: Nifty Trading Bot Runner
-
-on:
-  schedule:
-    # Monday to Friday: 03:30 UTC = 09:00 AM IST
-    - cron: '30 3 * * 1-5'
-  workflow_dispatch: # Manual start button
-
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 420
-
     steps:
-      - name: Check out Repository
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
-          pip install yfinance pandas ta requests reportlab pytz
+          python -m pip install --upgrade pip
+          pip install yfinance pandas numpy ta reportlab requests pytz
 
-      - name: Run Scalper Bot
-        run: |
-          python scalper.py
+      - name: Run Trading Bot
+        run: python scalper.py   # <-- ഇവിടെ നിങ്ങളുടെ പൈത്തൺ ഫയലിന്റെ കൃത്യമായ പേര് കൊടുക്കുക
+        env:
+          TZ: Asia/Kolkata
