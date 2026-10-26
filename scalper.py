@@ -17,6 +17,11 @@ from email.mime.base import MIMEBase
 from email import encoders
 import pytz
 
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+
 # ================= 1. CREDENTIALS & CONSTANTS =================
 BOT_TOKEN = "8830008372:AAGaq16u0STxZR1Z9q3qO5Lr1MQD288_9pc"
 TELEGRAM_CHAT_IDS = [
@@ -35,7 +40,6 @@ IST = pytz.timezone('Asia/Kolkata')
 TARGET_PTS = 30.0
 SL_PTS = 30.0
 
-# NSE Holidays for 2026
 NSE_HOLIDAYS_2026 = {
     "2026-01-26": "Republic Day",
     "2026-03-03": "Holi",
@@ -54,7 +58,7 @@ NSE_HOLIDAYS_2026 = {
 def get_monthly_expiry_date(year, month):
     last_day = calendar.monthrange(year, month)[1]
     d = date(year, month, last_day)
-    target_weekday = 3  # Thursday
+    target_weekday = 3
     while d.weekday() != target_weekday:
         d -= timedelta(days=1)
     while d.strftime("%Y-%m-%d") in NSE_HOLIDAYS_2026 or d.weekday() >= 5:
@@ -146,7 +150,7 @@ def git_commit_push(filename):
         subprocess.run(["git", "push"], check=True)
         print(f"Successfully committed and pushed {filename} to GitHub.")
     except Exception as e:
-        print(f"Git auto-commit failed: {e}")
+        print(f"Git auto-commit note (safe to ignore if using cache): {e}")
 
 def log_trade(trade_record):
     trades = []
@@ -181,7 +185,21 @@ def get_daily_levels():
         print(f"Pivot calculation error: {e}")
         return 0.0, 0.0, 0.0, 0.0, 0.0
 
-# ================= 5. REPORT GENERATION =================
+# ================= 5. HEIKIN ASHI CALCULATION =================
+def calculate_heikin_ashi(df):
+    ha_df = pd.DataFrame(index=df.index)
+    ha_df['Close'] = (df['Open'] + df['High'] + df['Low'] + df['Close']) / 4.0
+
+    ha_open = [df['Open'].iloc[0]]
+    for i in range(1, len(df)):
+        ha_open.append((ha_open[i-1] + ha_df['Close'].iloc[i-1]) / 2.0)
+    ha_df['Open'] = ha_open
+
+    ha_df['High'] = pd.concat([df['High'], ha_df['Open'], ha_df['Close']], axis=1).max(axis=1)
+    ha_df['Low'] = pd.concat([df['Low'], ha_df['Open'], ha_df['Close']], axis=1).min(axis=1)
+    return ha_df
+
+# ================= 6. REPORT GENERATION =================
 def generate_pdf(report_type="Daily"):
     today_str = datetime.now(IST).strftime("%Y-%m-%d")
     pdf_filename = f"{report_type}_Report_{today_str}.pdf"
@@ -244,7 +262,7 @@ def generate_pdf(report_type="Daily"):
     doc.build(elements)
     return pdf_filename
 
-# ================= 6. MAIN TRADING BOT ENGINE =================
+# ================= 7. MAIN TRADING BOT ENGINE =================
 def run_trading_bot():
     state = load_state()
     today_date_str = datetime.now(IST).strftime("%Y-%m-%d")
@@ -269,7 +287,7 @@ def run_trading_bot():
     start_time_str = now_ist.strftime("%I:%M %p")
     start_msg = f"""🤖 *Bot Started Successfully*
 Time: `{start_time_str}`
-Continuous Scalping Engine (09:00 AM - 03:40 PM) Active."""
+Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
     send_telegram(start_msg, admin_only=True)
     print(f"SAS LEVEL TRACKER System Running at {start_time_str}...")
 
@@ -296,43 +314,39 @@ Continuous Scalping Engine (09:00 AM - 03:40 PM) Active."""
         if "09:15" <= current_time_str < "15:20":
             try:
                 df = yf.download('^NSEI', period='5d', interval='2m', progress=False)
-                if not df.empty and len(df) >= 55:
+                if not df.empty and len(df) >= 30:
                     if isinstance(df.columns, pd.MultiIndex):
                         df.columns = df.columns.get_level_values(0)
 
-                    df['ema_9'] = ta.trend.ema_indicator(df['Close'], window=9)
+                    ha_df = calculate_heikin_ashi(df)
                     df['ema_21'] = ta.trend.ema_indicator(df['Close'], window=21)
-                    df['ema_50'] = ta.trend.ema_indicator(df['Close'], window=50)
-                    df['rsi'] = ta.momentum.rsi(df['Close'], window=14)
-                    
-                    adx_indicator = ta.trend.ADXIndicator(df['High'], df['Low'], df['Close'], window=14)
-                    df['adx'] = adx_indicator.adx()
 
-                    curr = df.iloc[-1]
-                    prev = df.iloc[-2]
-                    ltp = round(curr['Close'], 2)
-                    rsi = round(curr['rsi'], 2)
-                    adx_val = round(curr['adx'], 2)
-                    ema_50_val = round(curr['ema_50'], 2)
+                    curr_ha = ha_df.iloc[-1]
+                    prev_ha = ha_df.iloc[-2]
+                    curr_raw = df.iloc[-1]
+
+                    ltp = round(curr_raw['Close'], 2)
+                    ema_21_val = round(curr_raw['ema_21'], 2)
                     bar_time = str(df.index[-1])
 
                     trade = state.get("trade")
                     is_trading_window = "09:20" <= current_time_str <= "14:45"
                     atm_strike = round(ltp / 50.0) * 50
 
+                    # Heikin Ashi Strong Trend Logic
                     buy_trigger = (
-                        ltp > ema_50_val
-                        and adx_val > 15.0
-                        and prev['ema_9'] <= prev['ema_21'] and curr['ema_9'] > curr['ema_21']
-                        and rsi > 50
+                        curr_ha['Close'] > curr_ha['Open']
+                        and np.isclose(curr_ha['Low'], curr_ha['Open'], atol=2.0)
+                        and ltp > ema_21_val
+                        and prev_ha['Close'] <= prev_ha['Open']
                         and state.get("last_signal_time") != bar_time
                     )
 
                     sell_trigger = (
-                        ltp < ema_50_val
-                        and adx_val > 15.0
-                        and prev['ema_9'] >= prev['ema_21'] and curr['ema_9'] < curr['ema_21']
-                        and rsi < 50
+                        curr_ha['Close'] < curr_ha['Open']
+                        and np.isclose(curr_ha['High'], curr_ha['Open'], atol=2.0)
+                        and ltp < ema_21_val
+                        and prev_ha['Close'] >= prev_ha['Open']
                         and state.get("last_signal_time") != bar_time
                     )
 
@@ -380,7 +394,7 @@ Continuous Scalping Engine (09:00 AM - 03:40 PM) Active."""
                             state['today_trade_count'] = state.get("today_trade_count", 0) + 1
                             save_state(state)
                             trade_no = state['today_trade_count']
-                            send_telegram(f"🟢 *NEW SIGNAL: BUY NIFTY (Trade #{trade_no})*\n• Option Strike: `{strike}`\n• Spot Entry: `{ltp}`\n• Target (+30): `{target}`\n• Stop Loss (-30): `{sl}`")
+                            send_telegram(f"🟢 *NEW SIGNAL: BUY NIFTY (Trade #{trade_no})*\n• Option Strike: `{strike}`\n• Spot Entry: `{ltp}`\n• Target (+30): `{target}`\n• Stop Loss (-30): `{sl}`\n• Strategy: Heikin Ashi Strong Bullish + 21 EMA")
 
                         elif sell_trigger:
                             strike = f"{atm_strike} PE"
@@ -391,7 +405,7 @@ Continuous Scalping Engine (09:00 AM - 03:40 PM) Active."""
                             state['today_trade_count'] = state.get("today_trade_count", 0) + 1
                             save_state(state)
                             trade_no = state['today_trade_count']
-                            send_telegram(f"🔴 *NEW SIGNAL: SELL NIFTY (Trade #{trade_no})*\n• Option Strike: `{strike}`\n• Spot Entry: `{ltp}`\n• Target (-30): `{target}`\n• Stop Loss (+30): `{sl}`")
+                            send_telegram(f"🔴 *NEW SIGNAL: SELL NIFTY (Trade #{trade_no})*\n• Option Strike: `{strike}`\n• Spot Entry: `{ltp}`\n• Target (-30): `{target}`\n• Stop Loss (+30): `{sl}`\n• Strategy: Heikin Ashi Strong Bearish + 21 EMA")
 
             except Exception as e:
                 print(f"Loop runtime error: {e}")
@@ -423,7 +437,7 @@ Continuous Scalping Engine (09:00 AM - 03:40 PM) Active."""
             state['trade'] = None
             save_state(state)
 
-        # 03:40 PM - Daily & Monthly Reports Dispatched to Telegram & Email
+        # 03:40 PM - Daily & Monthly Reports
         if current_time_str >= "15:40" and not state.get("daily_report_sent"):
             daily_pdf = generate_pdf("Daily")
             send_telegram_file(daily_pdf, "Daily Trading Performance Report")
