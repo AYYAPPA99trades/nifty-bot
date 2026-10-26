@@ -5,7 +5,6 @@ import time
 import smtplib
 import calendar
 import requests
-import subprocess
 import numpy as np
 import pandas as pd
 import ta
@@ -24,11 +23,13 @@ from reportlab.lib import colors
 
 # ================= 1. CREDENTIALS & CONSTANTS =================
 BOT_TOKEN = "8830008372:AAGaq16u0STxZR1Z9q3qO5Lr1MQD288_9pc"
-TELEGRAM_CHAT_IDS = [
-    "8996427731",
-    "6789591588",
-    "-1004399032148"
-]
+
+ADMIN_CHAT_ID = "8996427731"
+JOINER_CHAT_ID = "6789591588"
+GROUP_CHAT_ID = "-1004399032148"
+
+# Ella receiver chat ID-kalum
+ALL_CHATS = [ADMIN_CHAT_ID, JOINER_CHAT_ID, GROUP_CHAT_ID]
 
 ADMIN_EMAIL = "Shinos99@gmail.com"
 GMAIL_EMAIL_PASS = "Qm1mu8xU"
@@ -72,26 +73,29 @@ def is_today_monthly_expiry():
 
 # ================= 3. TELEGRAM & EMAIL UTILS =================
 def send_telegram(message, admin_only=False):
-    target_chats = [TELEGRAM_CHAT_IDS[0]] if admin_only else TELEGRAM_CHAT_IDS
+    targets = [ADMIN_CHAT_ID] if admin_only else ALL_CHATS
     formatted_msg = f"⚡ *SAS LEVEL TRACKER* ⚡\n\n{message}"
-    for cid in target_chats:
+    for cid in targets:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         payload = {"chat_id": cid, "text": formatted_msg, "parse_mode": "Markdown"}
         try:
-            requests.post(url, json=payload, timeout=8)
+            res = requests.post(url, json=payload, timeout=8)
+            res_data = res.json()
+            if not res_data.get("ok"):
+                print(f"Telegram send failed for {cid}: {res_data.get('description')}")
         except Exception as e:
             print(f"Telegram Error: {e}")
 
 def send_telegram_file(file_path, caption):
     caption_text = f"📊 *SAS LEVEL TRACKER*\n{caption}"
-    for cid in TELEGRAM_CHAT_IDS:
+    for cid in ALL_CHATS:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
         post_data = {"chat_id": cid, "caption": caption_text, "parse_mode": "Markdown"}
         try:
             with open(file_path, 'rb') as f:
                 requests.post(url, data=post_data, files={'document': f}, timeout=25)
         except Exception as e:
-            print(f"Telegram File Send Error: {e}")
+            print(f"Telegram File Send Error for {cid}: {e}")
 
 def send_email_with_pdf(file_path, subject):
     try:
@@ -117,7 +121,7 @@ def send_email_with_pdf(file_path, subject):
     except Exception as e:
         print(f"Email Dispatch Error: {e}")
 
-# ================= 4. STATE & GITHUB BACKUP =================
+# ================= 4. STATE MANAGEMENT =================
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
@@ -141,17 +145,6 @@ def save_state(state):
     except Exception as e:
         print(f"State Save Error: {e}")
 
-def git_commit_push(filename):
-    try:
-        subprocess.run(["git", "config", "--global", "user.email", "bot@github.com"], check=True)
-        subprocess.run(["git", "config", "--global", "user.name", "SAS Trading Bot"], check=True)
-        subprocess.run(["git", "add", filename], check=True)
-        subprocess.run(["git", "commit", "-m", f"Auto-backup: update {filename}"], check=True)
-        subprocess.run(["git", "push"], check=True)
-        print(f"Successfully committed and pushed {filename} to GitHub.")
-    except Exception as e:
-        print(f"Git auto-commit note (safe to ignore if using cache): {e}")
-
 def log_trade(trade_record):
     trades = []
     if os.path.exists(DATA_LOG_FILE):
@@ -164,7 +157,6 @@ def log_trade(trade_record):
     try:
         with open(DATA_LOG_FILE, "w") as f:
             json.dump(trades, f, indent=4)
-        git_commit_push(DATA_LOG_FILE)
     except Exception as e:
         print(f"Log Save Error: {e}")
 
@@ -185,7 +177,7 @@ def get_daily_levels():
         print(f"Pivot calculation error: {e}")
         return 0.0, 0.0, 0.0, 0.0, 0.0
 
-# ================= 5. HEIKIN ASHI CALCULATION =================
+# ================= 5. HEIKIN ASHI LOGIC =================
 def calculate_heikin_ashi(df):
     ha_df = pd.DataFrame(index=df.index)
     ha_df['Close'] = (df['Open'] + df['High'] + df['Low'] + df['Close']) / 4.0
@@ -262,7 +254,7 @@ def generate_pdf(report_type="Daily"):
     doc.build(elements)
     return pdf_filename
 
-# ================= 7. MAIN TRADING BOT ENGINE =================
+# ================= 7. MAIN ENGINE =================
 def run_trading_bot():
     state = load_state()
     today_date_str = datetime.now(IST).strftime("%Y-%m-%d")
@@ -287,7 +279,7 @@ def run_trading_bot():
     start_time_str = now_ist.strftime("%I:%M %p")
     start_msg = f"""🤖 *Bot Started Successfully*
 Time: `{start_time_str}`
-Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
+Heikin Ashi Scalping Engine (2-Min + EMA 21) Active."""
     send_telegram(start_msg, admin_only=True)
     print(f"SAS LEVEL TRACKER System Running at {start_time_str}...")
 
@@ -295,7 +287,7 @@ Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
         now = datetime.now(IST)
         current_time_str = now.strftime("%H:%M")
 
-        # 09:05 AM Support & Resistance Levels
+        # 09:05 AM Levels
         if "09:05" <= current_time_str < "09:10" and not state.get("sr_sent"):
             p, r1, r2, s1, s2 = get_daily_levels()
             if p > 0:
@@ -310,7 +302,7 @@ Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
                 state["sr_sent"] = True
                 save_state(state)
 
-        # 09:15 AM to 03:20 PM - Continuous Engine Execution
+        # 09:15 AM to 03:20 PM Execution
         if "09:15" <= current_time_str < "15:20":
             try:
                 df = yf.download('^NSEI', period='5d', interval='2m', progress=False)
@@ -333,7 +325,6 @@ Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
                     is_trading_window = "09:20" <= current_time_str <= "14:45"
                     atm_strike = round(ltp / 50.0) * 50
 
-                    # Heikin Ashi Strong Trend Logic
                     buy_trigger = (
                         curr_ha['Close'] > curr_ha['Open']
                         and np.isclose(curr_ha['Low'], curr_ha['Open'], atol=2.0)
@@ -350,7 +341,7 @@ Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
                         and state.get("last_signal_time") != bar_time
                     )
 
-                    # ----- ACTIVE TRADE MONITORING -----
+                    # Monitoring
                     if trade:
                         strike = trade.get('strike', f"{atm_strike} CE")
                         if trade['type'] == "BUY":
@@ -383,7 +374,7 @@ Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
                                 save_state(state)
                                 send_telegram(f"🛑 *STOP LOSS HIT (-30 PTS) (SELL)*\n• Strike: `{strike}`\n• Exit Price: `{ltp}`\n• PnL: `{pnl} pts`")
 
-                    # ----- ENTRY TRIGGER -----
+                    # Entry Trigger
                     if state.get("trade") is None and is_trading_window:
                         if buy_trigger:
                             strike = f"{atm_strike} CE"
@@ -410,7 +401,7 @@ Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
             except Exception as e:
                 print(f"Loop runtime error: {e}")
 
-        # 03:20 PM - Auto Square-off
+        # 03:20 PM Square-off
         if current_time_str >= "15:20" and state.get("trade"):
             try:
                 df = yf.download('^NSEI', period='1d', interval='1m', progress=False)
@@ -437,7 +428,7 @@ Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
             state['trade'] = None
             save_state(state)
 
-        # 03:40 PM - Daily & Monthly Reports
+        # 03:40 PM Reports
         if current_time_str >= "15:40" and not state.get("daily_report_sent"):
             daily_pdf = generate_pdf("Daily")
             send_telegram_file(daily_pdf, "Daily Trading Performance Report")
