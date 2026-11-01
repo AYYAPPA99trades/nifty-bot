@@ -1,13 +1,21 @@
-name: Nifty Trading Bot Runner
+name: SAS LEVEL TRACKER Continuous Engine
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '15 3 * * 1-5'
+    # Monday to Friday at UTC 03:55 AM (IST 09:25 AM)
+    - cron: '55 3 * * 1-5'
+  workflow_dispatch:
+
+# Git write & workflow permissions set cheyyan
+permissions:
+  contents: write
+  actions: write
 
 jobs:
-  build:
+  run-scalper:
     runs-on: ubuntu-latest
+    timeout-minutes: 370
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -19,8 +27,27 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install --upgrade pip
-          pip install yfinance pandas ta requests reportlab pytz
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Run Scalper Bot
+      - name: Restore Previous Trade State
+        uses: actions/cache@v4
+        with:
+          path: |
+            trade_state.json
+            trade_history.json
+          key: trade-state-${{ github.run_id }}
+          restore-keys: |
+            trade-state-
+
+      - name: Run Trading System
         run: python scalper.py
+
+      - name: Commit & Save State Logs
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add trade_state.json trade_history.json || true
+          git commit -m "Auto-save trade state & history [skip ci]" || true
+          git push || true
