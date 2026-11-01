@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import smtplib
@@ -53,9 +54,14 @@ def send_telegram(message, admin_only=False):
                 "parse_mode": "Markdown"
             }
             try:
-                requests.post(url, json=payload, timeout=8)
+                res = requests.post(url, json=payload, timeout=12)
+                res_data = res.json()
+                if not res_data.get("ok"):
+                    print(f"Telegram dispatch failed for {cid}: {res_data.get('description')}")
+                else:
+                    print(f"Telegram alert sent to {cid}")
             except Exception as e:
-                print(f"Telegram Error: {e}")
+                print(f"Telegram Error for {cid}: {e}")
 
 def send_telegram_file(file_path, caption):
     caption_text = f"📊 *SAS LEVEL TRACKER*\n{caption}"
@@ -69,7 +75,7 @@ def send_telegram_file(file_path, caption):
             }
             try:
                 with open(file_path, 'rb') as f:
-                    requests.post(url, data=post_data, files={'document': f}, timeout=20)
+                    requests.post(url, data=post_data, files={'document': f}, timeout=25)
             except Exception as e:
                 print(f"Telegram File Send Error: {e}")
 
@@ -228,20 +234,51 @@ def is_monthly_expiry_today():
 
 def run_trading_bot():
     state = load_state()
-    today_date_str = datetime.now(IST).strftime("%Y-%m-%d")
+    now_ist = datetime.now(IST)
+    today_date_str = now_ist.strftime("%Y-%m-%d")
+    current_time_str = now_ist.strftime("%H:%M")
+    start_time_display = now_ist.strftime("%I:%M %p")
+
+    # 1. Bot run aayathum Admin-nu maathram Startup Alert pokunnu
+    start_msg = f"""🤖 *SAS BOT STARTED (Manual / Auto)*
+Time: `{start_time_display}` IST
+Date: `{today_date_str}`
+Checking Market Session Hours..."""
+    send_telegram(start_msg, admin_only=True)
+    print(f"Startup alert dispatched to Admin at {start_time_display}...")
+
+    # 2. Weekend checking (Saturday or Sunday)
+    if now_ist.weekday() >= 5:
+        weekend_msg = f"""🏖️ *WEEKEND EXIT*
+Time: `{start_time_display}` IST
+Today is market holiday (Weekend). Bot automatically shutting down."""
+        send_telegram(weekend_msg, admin_only=True)
+        print("Weekend detected. Shutting down bot.")
+        time.sleep(5)
+        sys.exit(0)
+
+    # 3. Time Condition Check: 09:25 AM to 03:25 PM allathappol manual run aayalum auto shutdown
+    if not ("09:25" <= current_time_str <= "15:25"):
+        off_time_msg = f"""⏰ *OFF-HOURS AUTO SHUTDOWN*
+Current Time: `{start_time_display}` IST
+Trading Session: `09:25 AM - 03:25 PM`
+Market session time allathathinaal bot automatically exit aavunnu."""
+        send_telegram(off_time_msg, admin_only=True)
+        print("Out of trading window (09:25 - 15:25). Bot exited successfully.")
+        time.sleep(5)
+        sys.exit(0)
+
+    # In-Session continuous running
+    active_msg = f"""🟢 *TRADING SESSION ACTIVE*
+Engine: Heikin Ashi + 21 EMA (2-Min)
+Scanning signals till 03:00 PM."""
+    send_telegram(active_msg, admin_only=True)
 
     if state.get("last_trade_date") != today_date_str:
         state["today_trade_count"] = 0
         state["last_trade_date"] = today_date_str
         state["sr_sent"] = False
         save_state(state)
-
-    start_time_str = datetime.now(IST).strftime("%I:%M %p")
-    start_msg = f"""🤖 *Bot Started / Reconnected*
-Time: `{start_time_str}`
-Heikin Ashi Trend Engine (09:25 AM - 03:25 PM) Active."""
-    send_telegram(start_msg, admin_only=True)
-    print(f"SAS LEVEL TRACKER System Running at {start_time_str}...")
 
     report_sent_today = False
 
@@ -253,7 +290,7 @@ Heikin Ashi Trend Engine (09:25 AM - 03:25 PM) Active."""
             time.sleep(60)
             continue
 
-        # 09:25 AM thudangumbol Support & Resistance Levels ayakkunnu
+        # 09:25 AM Support & Resistance Levels
         if current_time_str >= "09:25" and not state.get("sr_sent"):
             p, r1, r2, s1, s2 = get_daily_levels()
             if p > 0:
@@ -268,7 +305,7 @@ Heikin Ashi Trend Engine (09:25 AM - 03:25 PM) Active."""
                 state["sr_sent"] = True
                 save_state(state)
 
-        # 09:25 AM to 03:00 PM - Continuous Signal Tracking Window
+        # 09:25 AM to 03:00 PM - Signal tracking window
         if "09:25" <= current_time_str < "15:00":
             try:
                 df = yf.download('^NSEI', period='5d', interval='2m', progress=False)
@@ -290,7 +327,6 @@ Heikin Ashi Trend Engine (09:25 AM - 03:25 PM) Active."""
                     trade = state.get("trade")
                     is_trading_window = "09:25" <= current_time_str <= "15:00"
 
-                    # Heikin Ashi Strong Trend Logic
                     buy_trigger = (
                         curr_ha['Close'] > curr_ha['Open']
                         and np.isclose(curr_ha['Low'], curr_ha['Open'], atol=2.0)
@@ -307,7 +343,7 @@ Heikin Ashi Trend Engine (09:25 AM - 03:25 PM) Active."""
                         and state.get("last_signal_time") != bar_time
                     )
 
-                    # ----- ACTIVE TRADE MONITORING -----
+                    # Monitoring
                     if trade:
                         if trade['type'] == "BUY":
                             if ltp >= trade['target']:
@@ -355,7 +391,7 @@ Exit Price: `{ltp}`
 📉 PnL: `{pnl} pts`"""
                                 send_telegram(sl_msg)
 
-                    # ----- ENTRY TRIGGER -----
+                    # Entry Trigger
                     if state.get("trade") is None and is_trading_window:
                         if buy_trigger:
                             target = round(ltp + TARGET_PTS, 2)
@@ -441,6 +477,8 @@ Exit Price: `{ltp}`
         # 03:25 PM - Market Closing Shutdown
         if current_time_str >= "15:25":
             save_state(state)
+            closing_msg = f"🛑 *MARKET CLOSE SHUTDOWN (3:25 PM):* Bot operations completed."
+            send_telegram(closing_msg, admin_only=True)
             print("Today's operations completed at 03:25 PM.")
             break
 
