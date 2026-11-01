@@ -239,9 +239,11 @@ def run_trading_bot():
     start_time_str = datetime.now(IST).strftime("%I:%M %p")
     start_msg = f"""🤖 *Bot Started / Reconnected*
 Time: `{start_time_str}`
-Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
+Heikin Ashi Trend Engine (09:25 AM - 03:25 PM) Active."""
     send_telegram(start_msg, admin_only=True)
     print(f"SAS LEVEL TRACKER System Running at {start_time_str}...")
+
+    report_sent_today = False
 
     while True:
         now = datetime.now(IST)
@@ -251,8 +253,8 @@ Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
             time.sleep(60)
             continue
 
-        # 09:05 AM - Levels
-        if current_time_str >= "09:05" and not state.get("sr_sent"):
+        # 09:25 AM thudangumbol Support & Resistance Levels ayakkunnu
+        if current_time_str >= "09:25" and not state.get("sr_sent"):
             p, r1, r2, s1, s2 = get_daily_levels()
             if p > 0:
                 msg = f"""📈 *NIFTY 50 DAILY LEVELS*
@@ -266,8 +268,8 @@ Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
                 state["sr_sent"] = True
                 save_state(state)
 
-        # 09:20 AM to 02:45 PM - Engine Execution
-        if "09:15" <= current_time_str < "15:20":
+        # 09:25 AM to 03:00 PM - Continuous Signal Tracking Window
+        if "09:25" <= current_time_str < "15:00":
             try:
                 df = yf.download('^NSEI', period='5d', interval='2m', progress=False)
                 if not df.empty and len(df) >= 30:
@@ -286,7 +288,7 @@ Heikin Ashi Trend Engine (2-Min + EMA 21) Active."""
                     bar_time = str(df.index[-1])
 
                     trade = state.get("trade")
-                    is_trading_window = "09:20" <= current_time_str <= "14:45"
+                    is_trading_window = "09:25" <= current_time_str <= "15:00"
 
                     # Heikin Ashi Strong Trend Logic
                     buy_trigger = (
@@ -390,8 +392,8 @@ Exit Price: `{ltp}`
             except Exception as e:
                 print(f"Loop runtime error: {e}")
 
-        # 03:20 PM - Auto Square-off
-        if current_time_str >= "15:20" and state.get("trade"):
+        # 03:00 PM - Open Positions Auto Square-off Alert
+        if current_time_str >= "15:00" and state.get("trade"):
             try:
                 df = yf.download('^NSEI', period='1d', interval='1m', progress=False)
                 if isinstance(df.columns, pd.MultiIndex):
@@ -408,10 +410,10 @@ Exit Price: `{ltp}`
                 "type": trade['type'],
                 "entry": trade['entry'],
                 "exit": ltp,
-                "reason": "Intraday Auto Square-off (3:20 PM)",
+                "reason": "Intraday Auto Square-off (3:00 PM)",
                 "pnl": pnl
             })
-            sq_msg = f"""⏰ *INTRADAY AUTO-SQUARE OFF (3:20 PM)*
+            sq_msg = f"""⏰ *INTRADAY AUTO-SQUARE OFF (3:00 PM)*
 
 📊 Position: `{trade['type']} NIFTY`
 🔹 Entry Price: `{trade['entry']}`
@@ -421,10 +423,10 @@ Exit Price: `{ltp}`
             state['trade'] = None
             save_state(state)
 
-        # 03:40 PM - Reports
-        if current_time_str >= "15:40":
+        # 03:10 PM - Today's Trade P&L PDF Telegram & Email Alert
+        if current_time_str >= "15:10" and not report_sent_today:
             daily_pdf = generate_pdf("Daily")
-            send_telegram_file(daily_pdf, "Daily Trading Performance Report")
+            send_telegram_file(daily_pdf, "Daily Trading Performance Report (3:10 PM)")
             send_email_with_pdf(daily_pdf, "Daily P&L Report")
 
             if is_monthly_expiry_today():
@@ -432,8 +434,14 @@ Exit Price: `{ltp}`
                 send_telegram_file(monthly_pdf, "Monthly Expiry Detailed P&L Report")
                 send_email_with_pdf(monthly_pdf, "Monthly Expiry Detailed Report")
 
+            report_sent_today = True
             save_state(state)
-            print("Today's operations completed.")
+            print("3:10 PM PDF reports dispatched.")
+
+        # 03:25 PM - Market Closing Shutdown
+        if current_time_str >= "15:25":
+            save_state(state)
+            print("Today's operations completed at 03:25 PM.")
             break
 
         time.sleep(15)
