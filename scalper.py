@@ -239,7 +239,7 @@ def run_trading_bot():
     current_time_str = now_ist.strftime("%H:%M")
     start_time_display = now_ist.strftime("%I:%M %p")
 
-    # 1. Bot run aayathum Admin-nu maathram Startup Alert pokunnu
+    # 1. Admin Startup Alert
     start_msg = f"""🤖 *SAS BOT STARTED (Manual / Auto)*
 Time: `{start_time_display}` IST
 Date: `{today_date_str}`
@@ -247,7 +247,7 @@ Checking Market Session Hours..."""
     send_telegram(start_msg, admin_only=True)
     print(f"Startup alert dispatched to Admin at {start_time_display}...")
 
-    # 2. Weekend checking (Saturday or Sunday)
+    # 2. Weekend Auto Shutdown
     if now_ist.weekday() >= 5:
         weekend_msg = f"""🏖️ *WEEKEND EXIT*
 Time: `{start_time_display}` IST
@@ -257,7 +257,7 @@ Today is market holiday (Weekend). Bot automatically shutting down."""
         time.sleep(5)
         sys.exit(0)
 
-    # 3. Time Condition Check: 09:25 AM to 03:25 PM allathappol manual run aayalum auto shutdown
+    # 3. Off-Hours Auto Shutdown (Outside 09:25 AM - 03:25 PM)
     if not ("09:25" <= current_time_str <= "15:25"):
         off_time_msg = f"""⏰ *OFF-HOURS AUTO SHUTDOWN*
 Current Time: `{start_time_display}` IST
@@ -268,7 +268,7 @@ Market session time allathathinaal bot automatically exit aavunnu."""
         time.sleep(5)
         sys.exit(0)
 
-    # In-Session continuous running
+    # Session active aayirikkanulla confirmation alert
     active_msg = f"""🟢 *TRADING SESSION ACTIVE*
 Engine: Heikin Ashi + 21 EMA (2-Min)
 Scanning signals till 03:00 PM."""
@@ -343,7 +343,7 @@ Scanning signals till 03:00 PM."""
                         and state.get("last_signal_time") != bar_time
                     )
 
-                    # Monitoring
+                    # ----- ACTIVE TRADE MONITORING -----
                     if trade:
                         if trade['type'] == "BUY":
                             if ltp >= trade['target']:
@@ -391,7 +391,7 @@ Exit Price: `{ltp}`
 📉 PnL: `{pnl} pts`"""
                                 send_telegram(sl_msg)
 
-                    # Entry Trigger
+                    # ----- ENTRY TRIGGER -----
                     if state.get("trade") is None and is_trading_window:
                         if buy_trigger:
                             target = round(ltp + TARGET_PTS, 2)
