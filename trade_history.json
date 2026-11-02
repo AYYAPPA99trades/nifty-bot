@@ -1,0 +1,110 @@
+[
+    {
+        "date": "2026-11-02",
+        "time": "09:37",
+        "type": "BUY",
+        "entry": 23255.75,
+        "exit": 23288.25,
+        "reason": "Target 30 Hit",
+        "pnl": 32.5
+    },
+    {
+        "date": "2026-11-02",
+        "time": "10:44",
+        "type": "BUY",
+        "entry": 23317.1,
+        "exit": 23348.4,
+        "reason": "Target 30 Hit",
+        "pnl": 31.3
+    },
+    {
+        "date": "2026-11-02",
+        "time": "11:21",
+        "type": "BUY",
+        "entry": 23348.4,
+        "exit": 23317.1,
+        "reason": "Stop Loss 30 Hit",
+        "pnl": -31.3
+    },
+    {
+        "date": "2026-11-02",
+        "time": "11:47",
+        "type": "BUY",
+        "entry": 23331.6,
+        "exit": 23299.1,
+        "reason": "Stop Loss 30 Hit",
+        "pnl": -32.5
+    },
+    {
+        "date": "2026-11-02",
+        "time": "12:11",
+        "type": "SELL",
+        "entry": 23297.05,
+        "exit": 23329.75,
+        "reason": "Stop Loss 30 Hit",
+        "pnl": -32.7
+    },
+    {
+        "date": "2026-11-02",
+        "time": "12:33",
+        "type": "BUY",
+        "entry": 23338.1,
+        "exit": 23305.45,
+        "reason": "Stop Loss 30 Hit",
+        "pnl": -32.65
+    },
+    {
+        "date": "2026-11-02",
+        "time": "12:54",
+        "type": "SELL",
+        "entry": 23309.0,
+        "exit": 23276.55,
+        "reason": "Target 30 Hit",
+        "pnl": 32.45
+    },
+    {
+        "date": "2026-11-02",
+        "time": "13:06",
+        "type": "SELL",
+        "entry": 23282.8,
+        "exit": 23250.4,
+        "reason": "Target 30 Hit",
+        "pnl": 32.4
+    },
+    {
+        "date": "2026-11-02",
+        "time": "13:38",
+        "type": "SELL",
+        "entry": 23248.0,
+        "exit": 23217.45,
+        "reason": "Target 30 Hit",
+        "pnl": 30.55
+    },
+    {
+        "date": "2026-11-02",
+        "time": "14:14",
+        "type": "SELL",
+        "entry": 23233.75,
+        "exit": 23265.25,
+        "reason": "Stop Loss 30 Hit",
+        "pnl": -31.5
+    },
+    {
+        "date": "2026-11-02",
+        "time": "14:36",
+        "type": "BUY",
+        "entry": 23279.7,
+        "exit": 23310.35,
+        "reason": "Target 30 Hit",
+        "pnl": 30.65
+    },
+    {
+        "date": "2026-11-02",
+        "time": "15:00",
+        "type": "BUY",
+        "entry": 23320.75,
+        "exit": 23320.05,
+        "reason": "Intraday Auto Square-off (3:00 PM)",
+        "pnl": -0.7
+    }
+]
