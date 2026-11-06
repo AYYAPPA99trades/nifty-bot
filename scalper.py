@@ -271,7 +271,7 @@ Market session time allathathinaal bot automatically exit aavunnu."""
     # Session active aayirikkanulla confirmation alert
     active_msg = f"""🟢 *TRADING SESSION ACTIVE*
 Engine: Heikin Ashi + 21 EMA (2-Min)
-Scanning signals till 03:00 PM."""
+Scanning signals from 09:30 AM till 03:00 PM."""
     send_telegram(active_msg, admin_only=True)
 
     if state.get("last_trade_date") != today_date_str:
@@ -305,8 +305,8 @@ Scanning signals till 03:00 PM."""
                 state["sr_sent"] = True
                 save_state(state)
 
-        # 09:25 AM to 03:00 PM - Signal tracking window
-        if "09:25" <= current_time_str < "15:00":
+        # 09:30 AM to 03:00 PM - Signal tracking window
+        if "09:30" <= current_time_str < "15:00":
             try:
                 df = yf.download('^NSEI', period='5d', interval='2m', progress=False)
                 if not df.empty and len(df) >= 30:
@@ -325,10 +325,11 @@ Scanning signals till 03:00 PM."""
                     bar_time = str(df.index[-1])
 
                     trade = state.get("trade")
-                    is_trading_window = "09:25" <= current_time_str <= "15:00"
+                    is_trading_window = "09:30" <= current_time_str <= "15:00"
 
                     buy_trigger = (
-                        curr_ha['Close'] > curr_ha['Open']
+                        current_time_str >= "09:30"
+                        and curr_ha['Close'] > curr_ha['Open']
                         and np.isclose(curr_ha['Low'], curr_ha['Open'], atol=2.0)
                         and ltp > ema_21_val
                         and prev_ha['Close'] <= prev_ha['Open']
@@ -336,7 +337,8 @@ Scanning signals till 03:00 PM."""
                     )
 
                     sell_trigger = (
-                        curr_ha['Close'] < curr_ha['Open']
+                        current_time_str >= "09:30"
+                        and curr_ha['Close'] < curr_ha['Open']
                         and np.isclose(curr_ha['High'], curr_ha['Open'], atol=2.0)
                         and ltp < ema_21_val
                         and prev_ha['Close'] >= prev_ha['Open']
