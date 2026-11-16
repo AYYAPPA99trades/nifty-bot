@@ -592,5 +592,59 @@
         "exit": 25109.3,
         "reason": "Intraday Auto Square-off (3:00 PM)",
         "pnl": -0.65
+    },
+    {
+        "date": "2026-11-16",
+        "time": "10:24",
+        "type": "BUY",
+        "entry": 25309.2,
+        "exit": 25278.3,
+        "reason": "Stop Loss 30 Hit",
+        "pnl": -30.9
+    },
+    {
+        "date": "2026-11-16",
+        "time": "11:59",
+        "type": "SELL",
+        "entry": 25219.15,
+        "exit": 25249.45,
+        "reason": "Stop Loss 30 Hit",
+        "pnl": -30.3
+    },
+    {
+        "date": "2026-11-16",
+        "time": "13:36",
+        "type": "BUY",
+        "entry": 25262.8,
+        "exit": 25232.2,
+        "reason": "Stop Loss 30 Hit",
+        "pnl": -30.6
+    },
+    {
+        "date": "2026-11-16",
+        "time": "13:53",
+        "type": "SELL",
+        "entry": 25248.65,
+        "exit": 25214.55,
+        "reason": "Target 30 Hit",
+        "pnl": 34.1
+    },
+    {
+        "date": "2026-11-16",
+        "time": "14:26",
+        "type": "SELL",
+        "entry": 25184.9,
+        "exit": 25215.7,
+        "reason": "Stop Loss 30 Hit",
+        "pnl": -30.8
+    },
+    {
+        "date": "2026-11-16",
+        "time": "15:00",
+        "type": "BUY",
+        "entry": 25215.7,
+        "exit": 25213.65,
+        "reason": "Intraday Auto Square-off (3:00 PM)",
+        "pnl": -2.05
     }
 ]
