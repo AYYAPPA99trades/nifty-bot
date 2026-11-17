@@ -257,14 +257,14 @@ Today is market holiday (Weekend). Bot automatically shutting down."""
         time.sleep(5)
         sys.exit(0)
 
-    # 3. Off-Hours Auto Shutdown (Outside 09:25 AM - 03:25 PM)
-    if not ("09:25" <= current_time_str <= "15:25"):
+    # 3. Off-Hours Auto Shutdown (Outside 09:10 AM - 03:15 PM)
+    if not ("09:10" <= current_time_str <= "15:15"):
         off_time_msg = f"""⏰ *OFF-HOURS AUTO SHUTDOWN*
 Current Time: `{start_time_display}` IST
-Trading Session: `09:25 AM - 03:25 PM`
+Trading Session: `09:15 AM - 03:12 PM`
 Market session time allathathinaal bot automatically exit aavunnu."""
         send_telegram(off_time_msg, admin_only=True)
-        print("Out of trading window (09:25 - 15:25). Bot exited successfully.")
+        print("Out of trading window (09:10 - 15:15). Bot exited successfully.")
         time.sleep(5)
         sys.exit(0)
 
@@ -476,12 +476,12 @@ Exit Price: `{ltp}`
             save_state(state)
             print("3:10 PM PDF reports dispatched.")
 
-        # 03:25 PM - Market Closing Shutdown
-        if current_time_str >= "15:25":
+        # 03:12 PM - Market Closing Shutdown (Safe within GitHub 6-hour limit)
+        if current_time_str >= "15:12":
             save_state(state)
-            closing_msg = f"🛑 *MARKET CLOSE SHUTDOWN (3:25 PM):* Bot operations completed."
+            closing_msg = f"🛑 *MARKET CLOSE SHUTDOWN (3:12 PM):* Bot operations & daily report completed."
             send_telegram(closing_msg, admin_only=True)
-            print("Today's operations completed at 03:25 PM.")
+            print("Today's operations completed at 03:12 PM.")
             break
 
         time.sleep(15)
