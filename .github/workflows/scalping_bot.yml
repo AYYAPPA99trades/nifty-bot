@@ -2,11 +2,10 @@ name: SAS LEVEL TRACKER Continuous Engine
 
 on:
   schedule:
-    # Monday to Friday at UTC 03:55 AM (IST 09:25 AM)
-    - cron: '55 3 * * 1-5'
+    # Monday to Friday at UTC 03:45 AM (IST 09:15 AM)
+    - cron: '45 3 * * 1-5'
   workflow_dispatch:
 
-# Git write & workflow permissions set cheyyan
 permissions:
   contents: write
   actions: write
@@ -14,7 +13,7 @@ permissions:
 jobs:
   run-scalper:
     runs-on: ubuntu-latest
-    timeout-minutes: 370
+    timeout-minutes: 360
 
     steps:
       - name: Checkout Code
