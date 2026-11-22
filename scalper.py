@@ -44,7 +44,7 @@ SL_PTS = 30.0
 
 def send_telegram(message, admin_only=False):
     target_chats = [TELEGRAM_CHAT_IDS[0]] if admin_only else TELEGRAM_CHAT_IDS
-    formatted_msg = f"⚡ *SAS LEVEL TRACKER* ⚡\n\n{message}"
+    formatted_msg = f"⚡ *SAS VIP ALERT* ⚡\n\n{message}"
     for token in TELEGRAM_TOKENS:
         for cid in target_chats:
             url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -64,7 +64,7 @@ def send_telegram(message, admin_only=False):
                 print(f"Telegram Error for {cid}: {e}")
 
 def send_telegram_file(file_path, caption):
-    caption_text = f"📊 *SAS LEVEL TRACKER*\n{caption}"
+    caption_text = f"📊 *SAS VIP ALERT*\n{caption}"
     for token in TELEGRAM_TOKENS:
         for cid in TELEGRAM_CHAT_IDS:
             url = f"https://api.telegram.org/bot{token}/sendDocument"
@@ -83,7 +83,7 @@ def send_email_with_pdf(file_path, subject):
     msg = MIMEMultipart()
     msg['From'] = ADMIN_EMAIL_ADDRESS
     msg['To'] = ADMIN_EMAIL_ADDRESS
-    msg['Subject'] = f"SAS LEVEL TRACKER - {subject}"
+    msg['Subject'] = f"SAS VIP ALERT - {subject}"
     msg.attach(MIMEText("Please find attached the trading performance report.", 'plain'))
     try:
         with open(file_path, 'rb') as attachment:
@@ -184,7 +184,7 @@ def generate_pdf(report_type="Daily"):
     doc = SimpleDocTemplate(pdf_filename, pagesize=letter)
     styles = getSampleStyleSheet()
     elements = [
-        Paragraph("<b>SAS LEVEL TRACKER</b>", styles['Title']),
+        Paragraph("<b>SAS VIP ALERT</b>", styles['Title']),
         Paragraph(f"<b>{report_type} Performance Report ({today_str})</b>", styles['Heading2']),
         Spacer(1, 15)
     ]
@@ -240,7 +240,7 @@ def run_trading_bot():
     start_time_display = now_ist.strftime("%I:%M %p")
 
     # 1. Admin Startup Alert
-    start_msg = f"""🤖 *SAS BOT STARTED (Manual / Auto)*
+    start_msg = f"""🤖 *SAS VIP ALERT STARTED*
 Time: `{start_time_display}` IST
 Date: `{today_date_str}`
 Checking Market Session Hours..."""
@@ -268,9 +268,9 @@ Market session time allathathinaal bot automatically exit aavunnu."""
         time.sleep(5)
         sys.exit(0)
 
-    # Session active confirmation alert (No strategy indicator names)
+    # Session active confirmation alert
     active_msg = f"""🟢 *TRADING SESSION ACTIVE*
-Strategy: SAS LEVEL TRACKER (2-Min)
+Strategy: SAS VIP ALERT (2-Min)
 Scanning signals from 09:30 AM till 03:00 PM."""
     send_telegram(active_msg, admin_only=True)
 
@@ -424,7 +424,7 @@ Exit Price: `{ltp}`
 🔹 Entry Price: `{ltp}`
 🎯 Target (+30): `{target}`
 🛑 Stop Loss (-30): `{sl}`
-📊 Strategy: SAS LEVEL TRACKER"""
+📊 Strategy: SAS VIP ALERT"""
                             send_telegram(b_msg)
 
                         elif sell_trigger:
@@ -440,7 +440,7 @@ Exit Price: `{ltp}`
 🔹 Entry Price: `{ltp}`
 🎯 Target (-30): `{target}`
 🛑 Stop Loss (+30): `{sl}`
-📊 Strategy: SAS LEVEL TRACKER"""
+📊 Strategy: SAS VIP ALERT"""
                             send_telegram(s_msg)
 
             except Exception as e:
