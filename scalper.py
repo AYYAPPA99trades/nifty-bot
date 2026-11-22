@@ -268,9 +268,9 @@ Market session time allathathinaal bot automatically exit aavunnu."""
         time.sleep(5)
         sys.exit(0)
 
-    # Session active aayirikkanulla confirmation alert
+    # Session active confirmation alert (No strategy indicator names)
     active_msg = f"""🟢 *TRADING SESSION ACTIVE*
-Engine: Heikin Ashi + 21 EMA (2-Min)
+Strategy: SAS LEVEL TRACKER (2-Min)
 Scanning signals from 09:30 AM till 03:00 PM."""
     send_telegram(active_msg, admin_only=True)
 
@@ -305,13 +305,23 @@ Scanning signals from 09:30 AM till 03:00 PM."""
                 state["sr_sent"] = True
                 save_state(state)
 
-        # 09:30 AM to 03:00 PM - Signal tracking window
+        # Strict 09:30 AM to 03:00 PM - Signal tracking window
         if "09:30" <= current_time_str < "15:00":
             try:
                 df = yf.download('^NSEI', period='5d', interval='2m', progress=False)
                 if not df.empty and len(df) >= 30:
                     if isinstance(df.columns, pd.MultiIndex):
                         df.columns = df.columns.get_level_values(0)
+
+                    # Convert candle timestamp to IST & filter out pre-09:30 candles
+                    if df.index.tz is None:
+                        df.index = df.index.tz_localize('UTC').tz_convert(IST)
+                    else:
+                        df.index = df.index.tz_convert(IST)
+
+                    candle_dt = df.index[-1]
+                    candle_date_str = candle_dt.strftime("%Y-%m-%d")
+                    candle_time_str = candle_dt.strftime("%H:%M")
 
                     ha_df = calculate_heikin_ashi(df)
                     df['ema_21'] = ta.trend.ema_indicator(df['Close'], window=21)
@@ -322,13 +332,19 @@ Scanning signals from 09:30 AM till 03:00 PM."""
 
                     ltp = round(curr_raw['Close'], 2)
                     ema_21_val = round(curr_raw['ema_21'], 2)
-                    bar_time = str(df.index[-1])
+                    bar_time = str(candle_dt)
 
                     trade = state.get("trade")
-                    is_trading_window = "09:30" <= current_time_str <= "15:00"
+
+                    # Strict check: Both current IST clock & actual candle time must be >= 09:30 today
+                    is_valid_signal_time = (
+                        "09:30" <= current_time_str < "15:00"
+                        and candle_date_str == today_date_str
+                        and "09:30" <= candle_time_str < "15:00"
+                    )
 
                     buy_trigger = (
-                        current_time_str >= "09:30"
+                        is_valid_signal_time
                         and curr_ha['Close'] > curr_ha['Open']
                         and np.isclose(curr_ha['Low'], curr_ha['Open'], atol=2.0)
                         and ltp > ema_21_val
@@ -337,7 +353,7 @@ Scanning signals from 09:30 AM till 03:00 PM."""
                     )
 
                     sell_trigger = (
-                        current_time_str >= "09:30"
+                        is_valid_signal_time
                         and curr_ha['Close'] < curr_ha['Open']
                         and np.isclose(curr_ha['High'], curr_ha['Open'], atol=2.0)
                         and ltp < ema_21_val
@@ -394,7 +410,7 @@ Exit Price: `{ltp}`
                                 send_telegram(sl_msg)
 
                     # ----- ENTRY TRIGGER -----
-                    if state.get("trade") is None and is_trading_window:
+                    if state.get("trade") is None and is_valid_signal_time:
                         if buy_trigger:
                             target = round(ltp + TARGET_PTS, 2)
                             sl = round(ltp - SL_PTS, 2)
@@ -408,7 +424,7 @@ Exit Price: `{ltp}`
 🔹 Entry Price: `{ltp}`
 🎯 Target (+30): `{target}`
 🛑 Stop Loss (-30): `{sl}`
-📊 Pattern: Heikin Ashi Strong Bullish + 21 EMA"""
+📊 Strategy: SAS LEVEL TRACKER"""
                             send_telegram(b_msg)
 
                         elif sell_trigger:
@@ -424,7 +440,7 @@ Exit Price: `{ltp}`
 🔹 Entry Price: `{ltp}`
 🎯 Target (-30): `{target}`
 🛑 Stop Loss (+30): `{sl}`
-📊 Pattern: Heikin Ashi Strong Bearish + 21 EMA"""
+📊 Strategy: SAS LEVEL TRACKER"""
                             send_telegram(s_msg)
 
             except Exception as e:
